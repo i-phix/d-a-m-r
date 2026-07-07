@@ -70,12 +70,12 @@ d-a-m-r/
 
 ## Roles & permissions
 
-| Role | Value | Access |
-|---|---|---|
-| Admin | `admin` | Everything — all facilities, user management, tariff plans, cron trigger |
-| Facility Manager | `editor` | Scoped to their own `facilityId` — can manage meters/readings/invoices/residents/staff for that facility only |
-| Field Staff | `Staff` | Submit readings, view flags — no billing/user-management access |
-| Resident | `user` (type `Resident`) | Their own readings/invoices only, via the resident portal login or a tokenized public link |
+| Role             | Value                    | Access                                                                                                        |
+| ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Admin            | `admin`                  | Everything — all facilities, user management, tariff plans, cron trigger                                      |
+| Facility Manager | `editor`                 | Scoped to their own `facilityId` — can manage meters/readings/invoices/residents/staff for that facility only |
+| Field Staff      | `Staff`                  | Submit readings, view flags — no billing/user-management access                                               |
+| Resident         | `user` (type `Resident`) | Their own readings/invoices only, via the resident portal login or a tokenized public link                    |
 
 Facility scoping for Facility Managers is enforced on both list endpoints (filtered at the query level) and single-item fetch-by-id endpoints (checked post-fetch via `accessControl.denyIfFacilityMismatch`) — an FM cannot access another facility's data even by guessing an ID.
 
@@ -143,15 +143,6 @@ Everything is under `/api/v1/damr`. Grouped by resource:
 - `GET /reports/arrears-ageing`, `/reports/defaulters`, `/reports/consumption-trends`, `/reports/dashboard-stats`, `/reports/nrw`
 - `GET /resident/me`, `/resident/readings`, `/resident/invoices` — logged-in resident portal
 - `POST /admin/run-cron` (admin only) — manually trigger any scheduled job on demand
-
-## Known limitations
-
-- No automated test suite.
-- No frontend pagination — list pages request a fixed limit (30–100 records) and will silently truncate once a facility exceeds it, even though the backend supports real pagination.
-- No request-schema validation library; input checks are manual per-controller.
-- No rate limiting (including on login) and CORS has no origin allowlist configured by default.
-- Cron jobs run in-process via `node-cron` — will double-fire if the backend is ever scaled to multiple instances.
-- Invoice numbers are synthetic (derived from MongoDB `_id`/`createdAt`), not a persisted sequential field.
 
 ## Security notes
 
