@@ -1,0 +1,54 @@
+/*
+ * The sidebar's group headers ("Meter Management", "Residents", etc.) are
+ * rendered by PrimeReact's Accordion component. PrimeReact only ships a
+ * bare-minimum default style for its own classes (.p-accordion-header-link /
+ * .p-accordion-header-text) — no padding, no sizing — so unlike the actual
+ * nav links inside each group (which use the theme's .pc-link class and get
+ * the full 14px/20px padded, 14px/500-weight treatment), the collapsed group
+ * header rows render as cramped, tiny, unstyled text. This gives the group
+ * headers the same visual treatment as .pc-link so the sidebar reads as one
+ * consistent list instead of "big row, tiny row, big row, tiny row".
+ */
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-tab {
+  margin: 0 10px 6px;
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-tab:last-child {
+  margin-bottom: 0;
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-header-link {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px;
+  color: var(--pc-sidebar-color);
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  background: rgba(var(--pc-sidebar-color-rgb), 0.03);
+  border: 1px solid rgba(var(--pc-sidebar-color-rgb), 0.1);
+  border-radius: var(--bs-border-radius, 8px);
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-header-text {
+  flex: 1;
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-header-link:hover {
+  color: var(--pc-sidebar-active-color);
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-header:not(.p-disabled) .p-accordion-header-link[data-p-highlight="true"] {
+  color: var(--pc-sidebar-active-color);
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-header-link .p-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.pc-sidebar .pc-navbar .p-accordion .p-accordion-content {
+  padding: 0;
+}
