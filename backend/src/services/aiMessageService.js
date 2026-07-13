@@ -6,15 +6,6 @@ const {
   GOOGLE_CLOUD_PROJECT,
   GOOGLE_CLOUD_LOCATION,
 } = process.env;
-
-// Gemini runs through Vertex AI now (standard GCP Cloud Billing), not a
-// Gemini Developer API key — so there's no secret string to split/store
-// here anymore. Auth is handled entirely by Application Default
-// Credentials: locally that's the file `gcloud auth application-default
-// login` writes; on a real server it should instead be a service-account
-// JSON key referenced via the GOOGLE_APPLICATION_CREDENTIALS env var. No
-// fallback — if project/location/the Vertex flag aren't all present,
-// isEnabled() below is false and message generation is unavailable.
 const VERTEX_READY =
   GOOGLE_GENAI_USE_VERTEXAI === "true" &&
   !!GOOGLE_CLOUD_PROJECT &&
@@ -31,12 +22,6 @@ const ai = VERTEX_READY
 const MODEL = GEMINI_MODEL || "gemini-2.5-flash"; // gemini-2.0-flash was decommissioned June 1, 2026
 const MIN_WORDS = 25;
 const REQUEST_TIMEOUT_MS = 12000;
-// Image analysis (e.g. meter OCR) runs slower than plain text: the base64
-// photo itself has to upload, and Vertex AI's us-central1 region is a long
-// round-trip from Kenya. 20s was cutting it too close — the last few real
-// requests (thinking now disabled, so this is pure network + inference
-// time) took 15-25s themselves within a larger ~15-25s total request time,
-// so leave real headroom above that instead of nudging it up by inches.
 const VISION_REQUEST_TIMEOUT_MS = 45000;
 
 function isEnabled() {
@@ -79,15 +64,6 @@ async function callGemini(prompt) {
         config: {
           temperature: 0.9,
           maxOutputTokens: 500,
-          // gemini-2.5-flash "thinks" by default, and those thinking tokens
-          // are drawn from the SAME maxOutputTokens budget as the actual
-          // answer — with dynamic thinking on, it could burn through most
-          // or all of the 500 tokens above before writing a single word of
-          // the real message, which is exactly why these were coming back
-          // "too short" and falling back to the template. Disabling
-          // thinking here reserves the full budget for the message itself
-          // (this is plain templated prose generation, not a task that
-          // benefits from step-by-step reasoning anyway).
           thinkingConfig: { thinkingBudget: 0 },
         },
       }),
