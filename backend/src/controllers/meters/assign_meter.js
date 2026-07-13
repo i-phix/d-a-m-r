@@ -11,11 +11,11 @@ const {
   sendWhatsApp,
   meterAssignedEmailHTML,
   meterAssignedSmsText,
+  welcomeResidentEmailHTML,
+  welcomeResidentSmsText,
   wrapPlainTextEmail,
 } = require("../../utils/emailSmsService");
-const {
-  generateMeterAssignedMessage,
-} = require("../../services/aiMessageService");
+const { generateResidentMessage } = require("../../services/aiMessageService");
 const { denyIfFacilityMismatch } = require("../../utils/accessControl");
 const assignMeter = async (req, res) => {
   try {
@@ -46,13 +46,6 @@ const assignMeter = async (req, res) => {
     }
     const UnitMeta = getUnitMetaModel();
     const unitMeta = await UnitMeta.findOne({ unitId: unit._id }).lean();
-
-    // Unit itself has no locationId field (db.Unit / coreSchemas.js never
-    // defines one) — the unit's actual physical location lives on its
-    // Block (Block.locationId, set via the facility's Complex/Block admin
-    // UI), reached through the DAMR UnitMeta join. Previously this read
-    // `unit.locationId`, which was always undefined, so the meter's
-    // Location always displayed blank.
     let blockLocationId = null;
     if (unitMeta?.blockId) {
       const block = await getBlock().findById(unitMeta.blockId).lean();
@@ -92,33 +85,63 @@ const assignMeter = async (req, res) => {
       try {
         const resident = await db.Resident.findById(activeResidentId).lean();
         if (resident) {
+          const isFirstNotification = !resident.welcomeMessageSent;
+
+          let facility = null;
+          let block = null;
+          if (isFirstNotification) {
+            [facility, block] = await Promise.all([
+              unit.facilityId
+                ? db.Facility.findById(unit.facilityId).lean()
+                : null,
+              unitMeta?.blockId
+                ? getBlock().findById(unitMeta.blockId).lean()
+                : null,
+            ]);
+          }
+
           const notifyData = {
             residentName: resident.name,
             meterSerial: meter.serialNumber,
             initialReading: meter.initialReading,
+            ...(isFirstNotification && {
+              facilityName: facility?.name,
+              blockName: block?.name,
+              unitName: unit.name,
+            }),
           };
           const phone = resident.phoneNumber || resident.phone;
+          const emailSubject = isFirstNotification
+            ? `Welcome to ${facility?.name || "your new home"}`
+            : "Water Meter Assigned";
           let aiText = null;
           try {
-            aiText = await generateMeterAssignedMessage(notifyData);
+            aiText = await generateResidentMessage({
+              ...notifyData,
+              isNewResident: isFirstNotification,
+            });
             console.log(
-              `[assignMeter] AI-generated message used for meter ${meter._id}`,
+              `[assignMeter] AI-generated ${isFirstNotification ? "welcome+meter" : "meter-assigned"} message used for meter ${meter._id}`,
             );
           } catch (aiErr) {
             console.warn(
-              `[assignMeter] AI meter-assigned message generation failed, using fallback template: ${aiErr.message}`,
+              `[assignMeter] AI message generation failed, using fallback template: ${aiErr.message}`,
             );
           }
           const emailHtml = aiText
-            ? wrapPlainTextEmail("Water Meter Assigned", aiText)
-            : meterAssignedEmailHTML(notifyData);
+            ? wrapPlainTextEmail(emailSubject, aiText)
+            : isFirstNotification
+              ? welcomeResidentEmailHTML(notifyData)
+              : meterAssignedEmailHTML(notifyData);
           const smsText = aiText
             ? aiText.replace(/\n+/g, " ").trim()
-            : meterAssignedSmsText(notifyData);
+            : isFirstNotification
+              ? welcomeResidentSmsText(notifyData)
+              : meterAssignedSmsText(notifyData);
 
           const results = await Promise.allSettled([
             resident.email
-              ? sendEmail(resident.email, "Water Meter Assigned", emailHtml)
+              ? sendEmail(resident.email, emailSubject, emailHtml)
               : Promise.resolve({ skipped: "no email on file" }),
             phone
               ? sendSMS(phone, smsText)
@@ -126,7 +149,9 @@ const assignMeter = async (req, res) => {
             phone
               ? sendWhatsApp(phone, smsText, {
                   contactName: resident.name,
-                  source: "damr-meter-assigned",
+                  source: isFirstNotification
+                    ? "damr-resident-welcome"
+                    : "damr-meter-assigned",
                 })
               : Promise.resolve({ skipped: "no phone on file" }),
           ]);
@@ -137,6 +162,12 @@ const assignMeter = async (req, res) => {
               `sms=${smsResult.status}${smsResult.status === "rejected" ? ` (${smsResult.reason?.message})` : ""}, ` +
               `whatsapp=${waResult.status}${waResult.status === "rejected" ? ` (${waResult.reason?.message})` : ""}`,
           );
+
+          if (isFirstNotification) {
+            await db.Resident.findByIdAndUpdate(resident._id, {
+              welcomeMessageSent: true,
+            });
+          }
         } else {
           console.log(
             `[assignMeter] No resident document found for id ${activeResidentId} — cannot notify.`,

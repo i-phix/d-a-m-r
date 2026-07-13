@@ -1,7 +1,3 @@
-// Not used directly here, but required so the User/Facility/Unit/Resident
-// models are registered before Invoice.find(...).populate("residentId", ...)
-// below runs (mirrors why this file used to require("payservedb") without
-// ever referencing it directly either).
 require("../../utils/coreSchemas");
 const { getInvoice: getInvoiceModel } = require("../../utils/damrSchemas");
 const {
@@ -9,7 +5,7 @@ const {
   sendSMS,
   sendWhatsApp,
   overdueEmailHTML,
-  paymentInstructionsSmsText,
+  capSmsText,
 } = require("../../utils/emailSmsService");
 const {
   calcLateFee,
@@ -94,9 +90,9 @@ async function overdueReminders() {
         }
 
         if (resident.phone) {
-          const smsText = `DAMR Alert: Your water bill (Inv ${invoiceRef}) of KES ${Number(amountDue).toLocaleString()} is ${daysOverdue} day(s) overdue.${lateFee ? ` A late fee of KES ${Number(lateFee.penalty).toLocaleString()} has been applied.` : ""} Please pay immediately.${paymentInstructionsSmsText({ paybillShortCode, accountNumber })}`;
-          // WhatsApp is best-effort via backend_main's internal bridge and
-          // never blocks the SMS reminder if it fails.
+          const smsText = capSmsText(
+            `DAMR Alert: Water bill Inv ${invoiceRef}, KES ${Number(amountDue).toLocaleString()}, ${daysOverdue}d overdue.${lateFee ? ` Late fee KES ${Number(lateFee.penalty).toLocaleString()} applied.` : ""} Pay now.`,
+          );
           await Promise.allSettled([
             sendSMS(resident.phone, smsText),
             sendWhatsApp(resident.phone, smsText, {

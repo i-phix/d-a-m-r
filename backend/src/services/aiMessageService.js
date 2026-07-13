@@ -19,8 +19,9 @@ const ai = VERTEX_READY
     })
   : null;
 
-const MODEL = GEMINI_MODEL || "gemini-2.5-flash"; // gemini-2.0-flash was decommissioned June 1, 2026
-const MIN_WORDS = 25;
+const MODEL = GEMINI_MODEL || "gemini-2.5-flash";
+const MAX_CHARS = 141;
+const MIN_CHARS = 20;
 const REQUEST_TIMEOUT_MS = 12000;
 const VISION_REQUEST_TIMEOUT_MS = 45000;
 
@@ -28,16 +29,19 @@ function isEnabled() {
   return AI_MESSAGES_ENABLED === "true" && VERTEX_READY;
 }
 
-function wordCount(text) {
-  return String(text || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
-}
 function stripEmDashes(text) {
   return String(text || "")
     .replace(/\s*—\s*/g, ", ")
     .replace(/,\s*,/g, ",");
+}
+
+function truncateToLimit(text, max) {
+  const trimmed = String(text || "").trim();
+  if (trimmed.length <= max) return trimmed;
+  let cut = trimmed.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > max * 0.6) cut = cut.slice(0, lastSpace);
+  return cut.trim();
 }
 
 async function callGemini(prompt) {
@@ -46,9 +50,6 @@ async function callGemini(prompt) {
       "AI message generation not enabled — set AI_MESSAGES_ENABLED=true and GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION in .env",
     );
   }
-
-  // Promise.race timeout instead of an SDK-specific abort option — @google/genai's
-  // request-cancellation API isn't something to guess at, and this works regardless.
   const timeoutPromise = new Promise((_, reject) =>
     setTimeout(
       () => reject(new Error("Gemini request timed out")),
@@ -78,15 +79,10 @@ async function callGemini(prompt) {
     }
     return text.trim();
   } catch (err) {
-    // @google/genai throws ApiError with .status/.message for API-side failures.
     const status = err?.status ? ` ${err.status}` : "";
     throw new Error(`Gemini API error${status}: ${err.message}`);
   }
 }
-
-// Same as callGemini, but for multimodal (image + text) prompts — used by
-// ocrService.js to read meter photos. `imageBase64` is a base64-encoded
-// image (no data: URL prefix), `mimeType` e.g. "image/jpeg".
 async function callGeminiVision(prompt, imageBase64, mimeType) {
   if (!isEnabled()) {
     throw new Error(
@@ -107,10 +103,8 @@ async function callGeminiVision(prompt, imageBase64, mimeType) {
         model: MODEL,
         contents: [prompt, createPartFromBase64(imageBase64, mimeType)],
         config: {
-          temperature: 0.1, // low temperature — this is extraction, not creative writing
+          temperature: 0.1,
           maxOutputTokens: 500,
-          // Same reasoning-token-eats-the-budget issue as callGemini above —
-          // disable thinking so the JSON answer doesn't get cut off mid-string.
           thinkingConfig: { thinkingBudget: 0 },
         },
       }),
@@ -130,86 +124,93 @@ async function callGeminiVision(prompt, imageBase64, mimeType) {
   }
 }
 
-// Welcome / onboarding message
-async function generateWelcomeMessage({
+function buildResidentMessagePrompt({
   residentName,
   facilityName,
   blockName,
   unitName,
   meterSerial,
   initialReading,
+  isNewResident,
 }) {
-  const location =
-    [facilityName, blockName].filter(Boolean).join(", ") || "the facility";
-  const meterDetail = meterSerial
-    ? `They have already been assigned water meter number ${meterSerial}, with an initial reading of ${initialReading ?? 0} cubic meters recorded as their starting point (this reading just marks day one — nothing for them to act on).`
-    : `A water meter has not been assigned to their unit yet, so mention it will follow shortly and they'll be notified when it happens.`;
+  const name = residentName || "Resident";
 
-  const prompt = `Write a warm, welcoming, friendly onboarding message for a new resident moving into a water-metered residential facility managed by DAMR/PayServe.
+  if (isNewResident) {
+    const location = [facilityName, blockName].filter(Boolean).join(", ");
+    const meterLine = meterSerial
+      ? `Water meter ${meterSerial} is already assigned (starting reading ${initialReading ?? 0} m³, day one, nothing to act on).`
+      : `A water meter will be assigned shortly, they'll be notified when it happens.`;
 
-Details to weave in naturally:
-- Resident name: ${residentName || "Resident"}
-- Facility/location: ${location}
-- Unit number: ${unitName || "—"}
-- ${meterDetail}
+    return `Write a warm, welcoming onboarding message for a new resident moving into a water-metered facility managed by DAMR/PayServe.
+
+Resident: ${name}
+Location: ${location || "the facility"}${unitName ? `, Unit ${unitName}` : ""}
+${meterLine}
 
 Requirements:
-- At least 30 words but no more than about 50, written as flowing prose (a short paragraph or two).
-- Warm, welcoming, genuinely friendly tone, like a caring property team, not corporate or robotic.
-- Naturally mention that future water bills and payment reminders will come through the same channel (SMS/email).
-- Invite them to reach out to their facility management team with any questions.
-- Do NOT use markdown formatting (no asterisks, no headers, no bullet points), plain prose only.
-- Do NOT use em dashes (the "—" character) anywhere; use a comma, period, or parentheses instead.
-- Do NOT include a subject line, greeting salutation like "Subject:", or sign-off/signature block.
-- Start directly with "Dear ${residentName || "Resident"},"`;
-
-  const text = stripEmDashes(await callGemini(prompt));
-  if (wordCount(text) < MIN_WORDS) {
-    throw new Error(
-      `Gemini welcome message too short (${wordCount(text)} words)`,
-    );
+- The ENTIRE message must be 141 characters or fewer, including spaces and punctuation. This is a hard limit, count carefully before answering.
+- One short, warm sentence (a second only if strictly necessary to fit).
+- Briefly convey that bills/reminders come through this same channel.
+- No markdown, no em dashes, no subject line, no sign-off.
+- Start directly with "Dear ${name},"`;
   }
-  return text;
+
+  return `Write a warm, brief message telling a resident a water meter was just assigned to their unit, from DAMR/PayServe, a water-utility billing service.
+
+Resident: ${name}
+Meter: ${meterSerial}
+Starting reading: ${initialReading ?? 0} m³ (day one, nothing to act on)
+
+Requirements:
+- The ENTIRE message must be 141 characters or fewer, including spaces and punctuation. This is a hard limit, count carefully before answering.
+- One short, warm, reassuring sentence (a second only if strictly necessary to fit).
+- If it fits, briefly note future bills are based on this meter's readings.
+- No markdown, no em dashes, no subject line, no sign-off.
+- Start directly with "Dear ${name},"`;
 }
 
-//Meter-assigned message
-async function generateMeterAssignedMessage({
+async function generateResidentMessage({
   residentName,
+  facilityName,
+  blockName,
+  unitName,
   meterSerial,
   initialReading,
+  isNewResident = false,
 }) {
-  const prompt = `Write a warm, friendly message to a resident letting them know a water meter has just been assigned to their unit, from DAMR/PayServe, a water-utility billing service.
+  const params = {
+    residentName,
+    facilityName,
+    blockName,
+    unitName,
+    meterSerial,
+    initialReading,
+    isNewResident,
+  };
+  const prompt = buildResidentMessagePrompt(params);
 
-Details to weave in naturally:
-- Resident name: ${residentName || "Resident"}
-- Meter number: ${meterSerial}
-- Initial reading: ${initialReading ?? 0} cubic meters (this is just their starting point/day one — no usage before this counts)
+  let text = stripEmDashes(await callGemini(prompt));
 
-Requirements:
-- At least 30 words but no more than about 50, written as flowing prose (a short paragraph or two).
-- Warm, friendly, reassuring tone.
-- Explain briefly that future bills will be based on actual readings from this meter, so it's transparent and easy to track.
-- Encourage them to reach out to their facility team if they ever notice anything unusual, like a sudden spike or a possible leak.
-- Do NOT use markdown formatting (no asterisks, no headers, no bullet points), plain prose only.
-- Do NOT use em dashes (the "—" character) anywhere; use a comma, period, or parentheses instead.
-- Do NOT include a subject line or sign-off/signature block.
-- Start directly with "Dear ${residentName || "Resident"},"`;
+  if (text.length > MAX_CHARS) {
+    const retryPrompt = `${prompt}\n\nYour previous attempt was ${text.length} characters, too long: "${text}"\nRewrite so the ENTIRE message is 141 characters or fewer.`;
+    try {
+      const retryText = stripEmDashes(await callGemini(retryPrompt));
+      if (retryText.length <= MAX_CHARS) text = retryText;
+    } catch {}
+  }
 
-  const text = stripEmDashes(await callGemini(prompt));
-  if (wordCount(text) < MIN_WORDS) {
+  if (text.length > MAX_CHARS) {
+    text = truncateToLimit(text, MAX_CHARS);
+  }
+
+  if (text.length < MIN_CHARS) {
     throw new Error(
-      `Gemini meter-assigned message too short (${wordCount(text)} words)`,
+      `Gemini ${isNewResident ? "welcome" : "meter-assigned"} message too short (${text.length} chars)`,
     );
   }
+
   return text;
 }
-
-// ── Deterministic block/floor naming (no AI involved) ──────────────────
-// Block/floor naming used to be routed through Gemini with a free-text
-// "description" field it would interpret. That's been removed entirely —
-// naming is now driven only by explicit fields (count, an optional name
-// prefix, an optional number of basements), so the result is always
-// predictable and never depends on an external API being up.
 
 function buildFallbackNames(kind, count, label, numBasements) {
   if (!count || count <= 0) return [];
@@ -231,14 +232,10 @@ function buildFallbackNames(kind, count, label, numBasements) {
         ...Array.from({ length: remaining }, (_, i) => String(i + 1)),
       ];
     }
-    // No basements — "ground then ascending" is the standard convention.
     if (count === 1) return ["G"];
     return ["G", ...Array.from({ length: count - 1 }, (_, i) => String(i + 1))];
   }
 
-  // block/court/wing/division/etc — respect the facility's own label if
-  // one was supplied, so a "Wing"-labelled facility gets "Wing A", not
-  // "Block A".
   const prefix = (label || "Block").trim();
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   if (count <= letters.length) {
@@ -247,10 +244,6 @@ function buildFallbackNames(kind, count, label, numBasements) {
   return Array.from({ length: count }, (_, i) => `${prefix} ${i + 1}`);
 }
 
-// Continuation naming for floors added to a block that already has some —
-// e.g. raising "Number of Floors" on an existing block via Edit. Always
-// continues straight up from the highest existing plain-numbered floor
-// (new floors are added on top, so basement numbering doesn't apply here).
 function buildFallbackAdditionalFloorNames(count, existingNames) {
   let maxNum = null;
   for (const raw of existingNames || []) {
@@ -266,8 +259,7 @@ function buildFallbackAdditionalFloorNames(count, existingNames) {
 
 module.exports = {
   isEnabled,
-  generateWelcomeMessage,
-  generateMeterAssignedMessage,
+  generateResidentMessage,
   buildFallbackNames,
   buildFallbackAdditionalFloorNames,
   callGeminiVision,

@@ -1,27 +1,5 @@
 const axios = require("axios");
 
-// ─────────────────────────────────────────────────────────────────────────
-// This talks to PayServe's real, shared infrastructure (same one backend_main
-// uses — see backend_main/src/utils/send_new_sms.js, send_new_email.js and
-// send_utility_notification.js for the reference implementations):
-//
-//   • Email + SMS both go through the "communications" microservice
-//     (COMMUNICATIONS_ENDPOINT) as a direct send — no Africa's Talking, no
-//     raw nodemailer/SMTP from this process. Email still carries Zoho SMTP
-//     creds in the payload because the communications service relays them,
-//     it doesn't store them.
-//   • WhatsApp is NOT sent directly (DAMR has no Green API / Meta creds of
-//     its own). Instead it calls backend_main's internal, service-to-service
-//     endpoint POST /api/internal/notifications/whatsapp, authenticated with
-//     a shared bearer token — the same pattern water_meter_service and
-//     water_billing_service use. This is best-effort and gated by
-//     UTILITY_WHATSAPP_ENABLED; failures never block SMS/email.
-//
-// DAMR does not participate in backend_main's per-facility "hold/send"
-// status + queueing system (that reads from backend_main's own DB), so this
-// always sends directly — the equivalent of backend_main's "direct" path.
-// ─────────────────────────────────────────────────────────────────────────
-
 const {
   COMMUNICATIONS_ENDPOINT,
   SENDERID,
@@ -45,7 +23,6 @@ const DIRECT_EMAIL_ENDPOINT = () => `${COMMUNICATIONS_ENDPOINT}/api/email/send`;
 const WHATSAPP_ENDPOINT = () =>
   `${MAIN_BACKEND_URL}/api/internal/notifications/whatsapp`;
 
-//Phone formatting
 function formatKenyanPhone(phone) {
   const digits = String(phone).replace(/[^\d+]/g, "");
   if (digits.startsWith("+")) return digits.slice(1);
@@ -62,7 +39,22 @@ function formatFromField(senderEmail, senderName) {
   return senderEmail;
 }
 
-// ── SMS — PayServe "communications" microservice ──────────────────────
+const SMS_MAX_CHARS = 141;
+
+function capSmsText(text, max = SMS_MAX_CHARS) {
+  const trimmed = String(text || "").trim();
+  if (trimmed.length <= max) return trimmed;
+  let cut = trimmed.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > max * 0.6) cut = cut.slice(0, lastSpace);
+  return cut.trim();
+}
+function appendLinkIfFits(base, label, link, max = SMS_MAX_CHARS) {
+  if (!link) return base;
+  const withLink = `${base} ${label}: ${link}`;
+  return withLink.length <= max ? withLink : base;
+}
+
 async function sendSMS(to, message) {
   if (!to) return null;
 
@@ -100,7 +92,6 @@ async function sendSMS(to, message) {
   }
 }
 
-// ── Email — PayServe "communications" microservice (relays via Zoho SMTP) ─
 async function sendEmail(to, subject, html, text) {
   if (!to) return null;
 
@@ -149,10 +140,6 @@ async function sendEmail(to, subject, html, text) {
   }
 }
 
-// ── WhatsApp — via backend_main's internal service-to-service endpoint ────
-// Best-effort: DAMR has no WhatsApp credentials of its own, so this fans out
-// through the main PayServe backend the same way water_meter_service and
-// water_billing_service do. Never throws — callers can fire-and-forget.
 async function sendWhatsApp(to, message, opts = {}) {
   if (!to) return { success: false, error: "no recipient" };
 
@@ -196,9 +183,6 @@ async function sendWhatsApp(to, message, opts = {}) {
   }
 }
 
-// Wraps plain prose (as returned by the AI message generator — paragraphs
-// separated by blank lines) into the same styled shell as the hardcoded
-// templates use, so AI-generated and fallback emails look identical.
 function wrapPlainTextEmail(title, plainText) {
   const bodyHtml = String(plainText || "")
     .split(/\n\s*\n/)
@@ -209,7 +193,6 @@ function wrapPlainTextEmail(title, plainText) {
   return baseEmailWrapper(title, bodyHtml);
 }
 
-// ── Email templates ──────────────────────────────────────────────────
 function baseEmailWrapper(title, bodyHtml) {
   return `
   <div style="font-family: Arial, Helvetica, sans-serif; max-width: 560px; margin: 0 auto; color: #131920;">
@@ -226,9 +209,6 @@ function baseEmailWrapper(title, bodyHtml) {
   </div>`;
 }
 
-// Shared "how to pay" block — Paybill top-up model. Rendered only when a
-// shortcode has actually been configured for the facility; otherwise falls
-// back to a generic note so the email doesn't reference missing info.
 function paymentInstructionsHTML({ paybillShortCode, accountNumber }) {
   if (!paybillShortCode || !accountNumber) {
     return `<p>Payment details for this facility haven't been set up yet — please contact your facility manager.</p>`;
@@ -248,8 +228,6 @@ function paymentInstructionsSmsText({ paybillShortCode, accountNumber }) {
   return ` Pay via M-Pesa Paybill ${paybillShortCode}, Account ${accountNumber}.`;
 }
 
-// Rendered only when a billLink was actually generated (invoice-creation
-// code passes one in; older/lower-level callers may not).
 function billLinkHTML(billLink) {
   if (!billLink) return "";
   return `
@@ -263,11 +241,6 @@ function billLinkSmsText(billLink) {
   return billLink ? ` View/pay online: ${billLink}` : "";
 }
 
-// Roadmap Phase 8, #3 — resident-level statement of account. Rendered as a
-// secondary, plainer link than the bill-specific CTA above (billLinkHTML) —
-// this one links to every invoice the resident has ever had, not just this
-// one, so it's framed as "see your full history" rather than the primary
-// pay-this-bill action.
 function statementLinkHTML(statementLink) {
   if (!statementLink) return "";
   return `
@@ -280,12 +253,6 @@ function statementLinkSmsText(statementLink) {
   return statementLink ? ` Full statement: ${statementLink}` : "";
 }
 
-// Proposal page 10's sample bill shows "AI validation: Passed — within
-// normal range" as its own line item. `validationStatus` is the object
-// `services/validationStatusService.js#getValidationStatus()` returns
-// ({ status, label }) — computed live from the billed reading's flag at
-// send/render time, not persisted, so callers that don't pass one (or
-// pass null) simply omit the line rather than showing something stale.
 function validationStatusRowHTML(validationStatus) {
   if (!validationStatus) return "";
   const colorByStatus = {
@@ -336,17 +303,9 @@ function invoiceEmailHTML({
   );
 }
 
-function invoiceSmsText({
-  invoiceId,
-  totalAmount,
-  dueDate,
-  paybillShortCode,
-  accountNumber,
-  billLink,
-  validationStatus,
-  statementLink,
-}) {
-  return `DAMR: Water bill ${invoiceId} of KES ${Number(totalAmount || 0).toLocaleString()} is due ${dueDate}.${validationStatusSmsText(validationStatus)}${paymentInstructionsSmsText({ paybillShortCode, accountNumber })}${billLinkSmsText(billLink)}${statementLinkSmsText(statementLink)}`;
+function invoiceSmsText({ invoiceId, totalAmount, dueDate, billLink }) {
+  const base = `DAMR: Water bill ${invoiceId}, KES ${Number(totalAmount || 0).toLocaleString()}, due ${dueDate}.`;
+  return capSmsText(appendLinkIfFits(base, "Pay", billLink));
 }
 
 function upcomingDueEmailHTML({
@@ -358,7 +317,10 @@ function upcomingDueEmailHTML({
   paybillShortCode,
   accountNumber,
 }) {
-  const heading = daysUntilDue <= 0 ? "Your Water Bill Is Due Today" : "Your Water Bill Is Due Soon";
+  const heading =
+    daysUntilDue <= 0
+      ? "Your Water Bill Is Due Today"
+      : "Your Water Bill Is Due Soon";
   const dueLine =
     daysUntilDue <= 0
       ? "is due <strong>today</strong>"
@@ -375,16 +337,14 @@ function upcomingDueEmailHTML({
   );
 }
 
-function upcomingDueSmsText({
-  invoiceId,
-  totalAmount,
-  dueDate,
-  daysUntilDue,
-  paybillShortCode,
-  accountNumber,
-}) {
-  const dueLine = daysUntilDue <= 0 ? "is due today" : `is due in ${daysUntilDue} day(s) (${dueDate})`;
-  return `DAMR: Water bill ${invoiceId} of KES ${Number(totalAmount || 0).toLocaleString()} ${dueLine}.${paymentInstructionsSmsText({ paybillShortCode, accountNumber })}`;
+function upcomingDueSmsText({ invoiceId, totalAmount, dueDate, daysUntilDue }) {
+  const dueLine =
+    daysUntilDue <= 0
+      ? "due today"
+      : `due in ${daysUntilDue} day(s) (${dueDate})`;
+  return capSmsText(
+    `DAMR: Water bill ${invoiceId}, KES ${Number(totalAmount || 0).toLocaleString()}, ${dueLine}.`,
+  );
 }
 
 function overdueEmailHTML({
@@ -434,16 +394,12 @@ function receiptEmailHTML({
 function receiptSmsText({ invoiceId, amountPaid, mpesaCode, balance, status }) {
   const balanceLine =
     status === "Paid"
-      ? "Balance: KES 0 — bill fully paid."
-      : `Remaining balance: KES ${Number(balance || 0).toLocaleString()}.`;
-  return `DAMR Receipt: KES ${Number(amountPaid || 0).toLocaleString()} received for Inv ${invoiceId} (M-Pesa ${mpesaCode || "N/A"}). ${balanceLine}`;
+      ? "Balance KES 0, fully paid."
+      : `Balance KES ${Number(balance || 0).toLocaleString()}.`;
+  return capSmsText(
+    `DAMR Receipt: KES ${Number(amountPaid || 0).toLocaleString()} for Inv ${invoiceId} (M-Pesa ${mpesaCode || "N/A"}). ${balanceLine}`,
+  );
 }
-
-// ── Onboarding — sent when a resident is created/moved in, and again when
-// a meter is (re)assigned to their unit. Copy is warm and personalized
-// with the resident/facility/meter details passed in, kept to roughly
-// 30-50 words rather than a terse one-liner or a long block. No em dashes
-// (use commas/periods instead). ────────────────────────────────────────
 function welcomeResidentEmailHTML({
   residentName,
   facilityName,
@@ -452,7 +408,8 @@ function welcomeResidentEmailHTML({
   meterSerial,
   initialReading,
 }) {
-  const location = [facilityName, blockName].filter(Boolean).join(", ") || "your new home";
+  const location =
+    [facilityName, blockName].filter(Boolean).join(", ") || "your new home";
   const meterLine = meterSerial
     ? `Your meter number is <strong>${meterSerial}</strong>, with an initial reading of <strong>${initialReading ?? 0} m&sup3;</strong> as your starting point.`
     : `A water meter will be assigned to your unit shortly.`;
@@ -473,7 +430,8 @@ function welcomeResidentSmsText({
   meterSerial,
   initialReading,
 }) {
-  const location = [facilityName, blockName].filter(Boolean).join(", ") || "your new home";
+  const location =
+    [facilityName, blockName].filter(Boolean).join(", ") || "your new home";
   const meterLine = meterSerial
     ? `Your meter number is ${meterSerial}, with an initial reading of ${initialReading ?? 0} cubic meters as your starting point.`
     : `A water meter will be assigned to your unit shortly.`;
@@ -494,9 +452,6 @@ function meterAssignedSmsText({ residentName, meterSerial, initialReading }) {
   return `Dear ${residentName || "Resident"}, a water meter has been assigned to your unit. Your meter number is ${meterSerial}, with an initial reading of ${initialReading ?? 0} cubic meters as your starting point. Future bills will be based on your actual readings. If anything looks unusual, please contact your facility team. Welcome to hassle-free water management!`;
 }
 
-// ── Flag/anomaly alerts — sent to facility admin/FM staff immediately when
-// a flag is created (missing reading, spike, zero-flow, overnight leak,
-// erratic pattern), rather than only the batch "10+ open flags" email. ───
 const FLAG_TYPE_LABELS = {
   SPIKE: "Unusually High Consumption",
   DROP: "Unusually Low Consumption",
@@ -509,7 +464,13 @@ const FLAG_TYPE_LABELS = {
   duplicate_submission: "Duplicate Reading Submitted",
 };
 
-function flagAlertEmailHTML({ flagType, meterSerial, facilityName, unitName, description }) {
+function flagAlertEmailHTML({
+  flagType,
+  meterSerial,
+  facilityName,
+  unitName,
+  description,
+}) {
   const label = FLAG_TYPE_LABELS[flagType] || flagType;
   return baseEmailWrapper(
     `⚠️ DAMR Alert: ${label}`,
@@ -524,14 +485,19 @@ function flagAlertEmailHTML({ flagType, meterSerial, facilityName, unitName, des
 
 function flagAlertSmsText({ flagType, meterSerial, facilityName, unitName }) {
   const label = FLAG_TYPE_LABELS[flagType] || flagType;
-  const location = [facilityName, unitName ? `Unit ${unitName}` : null].filter(Boolean).join(", ");
-  return `DAMR Alert: ${label} on meter ${meterSerial || "—"}${location ? ` (${location})` : ""}. Please review in DAMR.`;
+  const base = `DAMR Alert: ${label} on meter ${meterSerial || "—"}. Review in DAMR.`;
+  const location = [facilityName, unitName ? `Unit ${unitName}` : null]
+    .filter(Boolean)
+    .join(", ");
+  const withLocation = location
+    ? `DAMR Alert: ${label} on meter ${meterSerial || "—"} (${location}). Review in DAMR.`
+    : base;
+  return capSmsText(withLocation.length <= SMS_MAX_CHARS ? withLocation : base);
 }
-
-// Sent to the resident directly for leak-suggestive flag types — actionable
-// on their end (check a tap, shut off a valve) rather than just informational.
 function residentLeakAlertSmsText({ residentName, meterSerial }) {
-  return `Dear ${residentName || "Resident"}, your water meter (${meterSerial || "—"}) shows unusual flow that may indicate a leak. Please check your taps/pipes. Contact your facility manager if you need help.`;
+  return capSmsText(
+    `Dear ${residentName || "Resident"}, your meter (${meterSerial || "—"}) shows unusual flow, possible leak. Check taps/pipes or contact your facility team.`,
+  );
 }
 
 module.exports = {
@@ -549,6 +515,7 @@ module.exports = {
   receiptEmailHTML,
   receiptSmsText,
   paymentInstructionsSmsText,
+  capSmsText,
   welcomeResidentEmailHTML,
   welcomeResidentSmsText,
   meterAssignedEmailHTML,
