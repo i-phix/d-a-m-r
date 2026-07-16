@@ -5,19 +5,6 @@ const {
 const { initiateInvoiceStkPush } = require("../../services/paymentsService");
 const { denyIfFacilityMismatch } = require("../../utils/accessControl");
 
-// ─────────────────────────────────────────────────────────────────────────
-// Native "Pay Now" (STK Push) — replaces the frontend calling PayServe's
-// Payments microservice's /v1/stkpush directly over Socket.IO. There's no
-// push notification channel of our own, so the frontend polls
-// getStkStatus() every few seconds after initiating instead; Safaricom's
-// callback (mpesa_callback.js -> paymentsService.applyStkCallback) is what
-// actually updates the StkPushRequest/Invoice in the background.
-// ─────────────────────────────────────────────────────────────────────────
-
-/**
- * POST /invoices/:id/stk-push (protect, adminOrFM)
- * Body: { phone }
- */
 const stkPushInvoice = async (req, res) => {
   try {
     const { id } = req.params;

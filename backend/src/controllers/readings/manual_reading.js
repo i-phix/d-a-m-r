@@ -7,7 +7,7 @@ const {
   detectAnomalies,
   checkDuplicateSubmission,
 } = require("../../services/anomalyService");
-const { runOCRPipeline } = require("../../services/ocrService");
+const { runOCRPipeline, verifySerial } = require("../../services/ocrService");
 const { denyIfFacilityMismatch } = require("../../utils/accessControl");
 
 const OCR_MISMATCH_ABS_TOLERANCE = 1;
@@ -52,6 +52,14 @@ const manualReading = async (req, res) => {
     if (req.file) {
       ocrResult = await runOCRPipeline(req.file.path);
     }
+    // Only run when a photo was attached — no photo means no serial check
+    // at all, unaffected by this. "matched"/"mismatch"/"unverified", per
+    // verifySerial()'s own comment: both "mismatch" (confidently wrong) and
+    // "unverified" (couldn't read a serial off the photo at all) hold the
+    // reading as "pending" instead of "confirmed" — only a positive match
+    // clears it.
+    const serialStatus = ocrResult ? verifySerial(ocrResult, meter.serialNumber) : null;
+    const serialNeedsReview = serialStatus === "mismatch" || serialStatus === "unverified";
 
     const reading = await Reading.create({
       meterId,
@@ -65,7 +73,7 @@ const manualReading = async (req, res) => {
       imageUrl: req.file ? `/uploads/${req.file.filename}` : null,
       ocrRawValue: ocrResult?.rawText || null,
       ocrConfidence: ocrResult?.confidence || null,
-      status: "confirmed",
+      status: serialNeedsReview ? "pending" : "confirmed",
       submittedBy: req.user._id,
       notes: notes || (isMeterReset ? "Meter reset detected" : ""),
     });
@@ -113,12 +121,38 @@ const manualReading = async (req, res) => {
         await Meter.findByIdAndUpdate(meterId, { $inc: { openFlagCount: 1 } });
       }
     }
+    let serialFlag = null;
+    if (serialStatus === "mismatch") {
+      serialFlag = await Flag.create({
+        type: "serial_mismatch",
+        meterId,
+        readingId: reading._id,
+        facilityId: meter.facilityId || null,
+        status: "open",
+        description: `Attached photo's visible serial number ("${ocrResult.serialNumber}") doesn't match this meter's registered serial number ("${meter.serialNumber}") — reading held as pending until verified.`,
+      });
+      await Meter.findByIdAndUpdate(meterId, { $inc: { openFlagCount: 1 } });
+    } else if (serialStatus === "unverified") {
+      serialFlag = await Flag.create({
+        type: "serial_unverified",
+        meterId,
+        readingId: reading._id,
+        facilityId: meter.facilityId || null,
+        status: "open",
+        description: `Could not confidently read a serial number from the attached photo — reading held as pending until someone verifies it's for meter ${meter.serialNumber}.`,
+      });
+      await Meter.findByIdAndUpdate(meterId, { $inc: { openFlagCount: 1 } });
+    }
     const duplicateFlag = await checkDuplicateSubmission(reading);
 
     return res.status(200).send({
-      message: isMeterReset
-        ? "Reading recorded. Meter reset detected — a review flag has been raised."
-        : "Manual reading submitted successfully",
+      message: serialNeedsReview
+        ? serialStatus === "mismatch"
+          ? "Reading recorded but held as pending — the attached photo's serial number doesn't match this meter."
+          : "Reading recorded but held as pending — could not confirm the meter's serial number from the attached photo."
+        : isMeterReset
+          ? "Reading recorded. Meter reset detected — a review flag has been raised."
+          : "Manual reading submitted successfully",
       reading,
       flag: flag || null,
       ocrCheck: req.file
@@ -127,9 +161,12 @@ const manualReading = async (req, res) => {
             value: ocrResult?.value ?? null,
             confidence: ocrResult?.confidence ?? null,
             mismatch: !!ocrMismatchFlag,
+            serialNumber: ocrResult?.serialNumber ?? null,
+            serialStatus,
           }
         : { performed: false },
       ocrMismatchFlag: ocrMismatchFlag || null,
+      serialFlag: serialFlag || null,
       duplicateFlag: duplicateFlag || null,
       isMeterReset,
     });

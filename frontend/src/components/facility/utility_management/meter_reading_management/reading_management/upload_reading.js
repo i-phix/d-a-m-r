@@ -16,17 +16,12 @@ function UploadReading() {
   const [file, setFile] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // Set once a scan has run for the currently-selected photo — the same
-  // button then switches from "Scan" to "Submit". Any change to the file
-  // or meter invalidates it, since a stale OCR result shouldn't be
-  // submittable against a different photo.
   const [scanned, setScanned] = useState(false);
   const [ocrResult, setOcrResult] = useState(null);
   const [readingValue, setReadingValue] = useState("");
   const [submitResult, setSubmitResult] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Fetch assigned meters for dropdown
   useEffect(() => {
     makeAuthRequest(`${getMetersURL}?status=ASSIGNED`, "GET").then((res) => {
       if (res.success) setMeters(res.data.meters || []);
@@ -76,6 +71,7 @@ function UploadReading() {
 
       const formData = new FormData();
       formData.append("meterImage", file);
+      formData.append("meterId", meterId);
 
       const response = await axios.post(
         `${backend_url}/api/v1/damr/readings/scan`,
@@ -98,6 +94,16 @@ function UploadReading() {
         } else if (!ocr?.meetsThreshold) {
           toastify(
             "Scanned — couldn't confidently read the register, please check/correct the value below",
+            "warn",
+          );
+        } else if (ocr?.serialStatus === "mismatch") {
+          toastify(
+            "Scanned — but this photo's serial number doesn't look like this meter. Submitting will hold it pending review.",
+            "warn",
+          );
+        } else if (ocr?.serialStatus === "unverified") {
+          toastify(
+            "Scanned — couldn't confirm the meter's serial number from this photo. Submitting will hold it pending review.",
             "warn",
           );
         } else {
@@ -142,7 +148,10 @@ function UploadReading() {
 
       if (response.status === 200) {
         setSubmitResult(response.data);
-        toastify(response.data.message || "Reading submitted successfully", "success");
+        toastify(
+          response.data.message || "Reading submitted successfully",
+          "success",
+        );
       }
     } catch (err) {
       const msg = err.response?.data?.error || err.message;
@@ -286,7 +295,8 @@ function UploadReading() {
                     disabled={busy}
                   />
                   <small className="text-muted">
-                    Pre-filled from the scan — correct it if it doesn't match the photo, then Submit.
+                    Pre-filled from the scan — correct it if it doesn't match
+                    the photo, then Submit.
                   </small>
                 </div>
               )}
@@ -376,12 +386,15 @@ function UploadReading() {
                   <div className="col-6">
                     <p className="text-muted mb-1">Read Value</p>
                     <h2 className="mb-0 text-primary">
-                      {ocrResult.value ?? "—"} <small className="fs-6">m³</small>
+                      {ocrResult.value ?? "—"}{" "}
+                      <small className="fs-6">m³</small>
                     </h2>
                   </div>
                   <div className="col-6">
                     <p className="text-muted mb-1">Confidence</p>
-                    <h2 className={`mb-0 ${confidenceColor(ocrResult.confidence)}`}>
+                    <h2
+                      className={`mb-0 ${confidenceColor(ocrResult.confidence)}`}
+                    >
                       {ocrResult.confidence != null
                         ? `${(ocrResult.confidence * 100).toFixed(0)}%`
                         : "—"}
@@ -398,7 +411,33 @@ function UploadReading() {
                 {!ocrResult.error && !ocrResult.meetsThreshold && (
                   <div className="alert alert-warning py-2 mt-2">
                     <i className="ti ti-alert-triangle me-1"></i>
-                    Low confidence — please verify the value against the photo before submitting.
+                    Low confidence — please verify the value against the photo
+                    before submitting.
+                  </div>
+                )}
+
+                {ocrResult.serialStatus === "mismatch" && (
+                  <div className="alert alert-danger py-2 mt-2">
+                    <i className="ti ti-id-badge-2 me-1"></i>
+                    <strong>Serial number doesn't match:</strong> this photo
+                    shows serial "{ocrResult.serialNumber || "unclear"}", not
+                    this meter. Submitting will hold the reading pending until
+                    verified.
+                  </div>
+                )}
+                {ocrResult.serialStatus === "unverified" && (
+                  <div className="alert alert-warning py-2 mt-2">
+                    <i className="ti ti-id-badge-2 me-1"></i>
+                    <strong>Serial number not confirmed:</strong> couldn't read
+                    a legible serial number off this photo. Submitting will hold
+                    the reading pending until verified.
+                  </div>
+                )}
+                {ocrResult.serialStatus === "matched" && (
+                  <div className="alert alert-success py-2 mt-2">
+                    <i className="ti ti-id-badge-2 me-1"></i>
+                    Serial number confirmed — this photo matches the selected
+                    meter.
                   </div>
                 )}
 
@@ -430,7 +469,9 @@ function UploadReading() {
                   <div className="col-6">
                     <small className="text-muted">Consumption</small>
                     <p className="mb-0">
-                      <strong>{submitResult.reading?.consumption ?? "—"} m³</strong>
+                      <strong>
+                        {submitResult.reading?.consumption ?? "—"} m³
+                      </strong>
                     </p>
                   </div>
                 </div>
@@ -455,6 +496,18 @@ function UploadReading() {
                   </div>
                 )}
 
+                {submitResult.serialFlag && (
+                  <div className="alert alert-danger py-2 mt-2">
+                    <i className="ti ti-id-badge-2 me-1"></i>
+                    <strong>
+                      {submitResult.serialFlag.type === "serial_mismatch"
+                        ? "Serial number doesn't match:"
+                        : "Serial number not confirmed:"}
+                    </strong>{" "}
+                    {submitResult.serialFlag.description}
+                  </div>
+                )}
+
                 {submitResult.flag && (
                   <div className="alert alert-danger py-2 mt-2">
                     <i className="ti ti-flag me-1"></i>
@@ -468,8 +521,8 @@ function UploadReading() {
                 {submitResult.duplicateFlag && (
                   <div className="alert alert-warning py-2 mt-2">
                     <i className="ti ti-copy me-1"></i>
-                    <strong>Duplicate:</strong> another reading already exists for this
-                    meter today — flagged for review.
+                    <strong>Duplicate:</strong> another reading already exists
+                    for this meter today — flagged for review.
                   </div>
                 )}
 

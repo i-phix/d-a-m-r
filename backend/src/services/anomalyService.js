@@ -13,17 +13,7 @@ const {
   residentLeakAlertSmsText,
 } = require("../utils/emailSmsService");
 
-// Flag types where the resident is notified directly too — actionable on
-// their side (check a tap/pipe), not just something facility staff review.
 const LEAK_SUGGESTIVE_TYPES = new Set(["SPIKE", "OVERNIGHT_LEAK", "CRITICAL"]);
-
-/**
- * Notifies facility admin/FM staff immediately when a flag is created
- * (rather than only the batch "10+ open flags" email dailyAnomalyScan.js
- * already sends), and the resident directly for leak-suggestive types.
- * Best-effort — a notification failure never blocks flag creation, which
- * has already succeeded by the time this runs.
- */
 async function notifyFlagCreated(flag, meter) {
   try {
     const [facility, unit, staff] = await Promise.all([
@@ -76,7 +66,6 @@ async function notifyFlagCreated(flag, meter) {
       }),
     );
 
-    // Leak-suggestive types are also actionable for the resident directly.
     if (LEAK_SUGGESTIVE_TYPES.has(flag.type) && meter.currentResident) {
       const resident = await db.Resident.findById(meter.currentResident).lean();
       const phone = resident?.phoneNumber || resident?.phone;
@@ -95,24 +84,21 @@ async function notifyFlagCreated(flag, meter) {
       }
     }
   } catch (err) {
-    console.error(`Flag alert notification failed for flag ${flag._id}:`, err.message);
+    console.error(
+      `Flag alert notification failed for flag ${flag._id}:`,
+      err.message,
+    );
   }
 }
 
-// Roadmap Phase 8, #1 — "anomalies should gate billing, not just flag it".
-// Only these types hold billing; DROP/ERRATIC/ZERO_FLOW and the legacy
-// manual-review-style types stay flag-only (common, often legitimate, and
-// blocking on them would hold billing far too often). Matches the
-// recommendation in Phase_8_Gap_Closure_Roadmap.md #1.
-const BLOCKING_FLAG_TYPES = ["SPIKE", "OVERNIGHT_LEAK", "CRITICAL"];
+const BLOCKING_FLAG_TYPES = [
+  "SPIKE",
+  "OVERNIGHT_LEAK",
+  "CRITICAL",
+  "serial_mismatch",
+  "serial_unverified",
+];
 
-/**
- * Returns the open, billing-blocking flag for a reading, if any — used by
- * every invoice-creation path (monthlyInvoices.js, generate_invoice.js,
- * bulk_generate.js) to decide whether to create the invoice as "Held"
- * instead of "Unpaid", and by resolve_flag.js to know when it's safe to
- * release one.
- */
 async function getBlockingFlag(readingId) {
   if (!readingId) return null;
   const Flag = getFlagModel();
@@ -131,14 +117,6 @@ const FLAG_SEVERITY = {
   ERRATIC: "LOW",
   CRITICAL: "CRITICAL",
 };
-
-// Below this many standard deviations under the historical mean, a reading
-// is considered an abnormal drop — possible meter tampering/bypass,
-// malfunction, or a resident who's moved out without notifying the
-// facility. Less strict than SPIKE's +3σ since drops toward zero are also
-// commonly legitimate (vacancy, reduced usage) — this threshold is meant
-// to catch a sharp, statistically unusual dip after consistent usage, not
-// every low reading.
 const DROP_SIGMA_THRESHOLD = -2.5;
 
 function stats(values) {
@@ -177,7 +155,8 @@ async function detectAnomalies(reading) {
   if (consumption !== null && consumption >= 0 && std > 0) {
     sigmaDeviation = (consumption - mean) / std;
     if (sigmaDeviation > 3) flagType = "SPIKE";
-    else if (mean > 0 && sigmaDeviation < DROP_SIGMA_THRESHOLD) flagType = "DROP";
+    else if (mean > 0 && sigmaDeviation < DROP_SIGMA_THRESHOLD)
+      flagType = "DROP";
   }
   if (!flagType && history.length >= 2) {
     const lastTwo = history.slice(0, 2);
@@ -219,20 +198,11 @@ async function detectAnomalies(reading) {
     { new: true },
   ).lean();
 
-  // Best-effort immediate alert — doesn't block flag creation, which has
-  // already succeeded above (notifyFlagCreated has its own try/catch).
   await notifyFlagCreated(flag, updatedMeter);
 
   return flag;
 }
 
-/**
- * Roadmap Phase 4 — "duplicate-submission check (same meter, same day,
- * flagged instead of silently accepted)". Called after a reading has
- * already been saved (both manual_reading.js and upload_reading.js use
- * this) — never blocks the submission itself, just raises a flag for
- * staff to review, same as the meter-reset "manual_review" pattern.
- */
 async function checkDuplicateSubmission(reading) {
   const Reading = getReadingModel();
   const Flag = getFlagModel();

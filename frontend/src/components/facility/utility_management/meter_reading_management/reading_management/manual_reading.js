@@ -19,8 +19,6 @@ function ManualReading() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const fileInputRef = useRef(null);
-
-  // Fetch assigned meters for dropdown
   useEffect(() => {
     makeAuthRequest(`${getMetersURL}?status=ASSIGNED`, "GET").then((res) => {
       if (res.success) setMeters(res.data.meters || []);
@@ -67,10 +65,6 @@ function ManualReading() {
 
     try {
       setLoading(true);
-
-      // Roadmap Phase 4 — merged manual+OCR flow: if a photo is attached,
-      // submit as multipart so the backend can run OCR as a cross-check
-      // against the keyed value. No photo → plain JSON, same as before.
       if (photo) {
         const damrUser = await getItem("DAMR_USER");
         const formData = new FormData();
@@ -320,10 +314,33 @@ function ManualReading() {
 
               {/* Inline result */}
               {result && (
-                <div className="alert alert-success mt-3">
+                <div
+                  className={`alert mt-3 ${
+                    result.ocrCheck?.serialStatus === "mismatch" ||
+                    result.ocrCheck?.serialStatus === "unverified"
+                      ? "alert-warning"
+                      : "alert-success"
+                  }`}
+                >
                   <i className="ti ti-circle-check me-2"></i>
                   <strong>Reading recorded:</strong> {result.reading?.value} m³
                   &nbsp;|&nbsp; Consumption: {result.reading?.consumption} m³
+                  {result.ocrCheck?.serialStatus === "mismatch" && (
+                    <div className="mt-2 text-danger">
+                      <i className="ti ti-alert-triangle me-1"></i>
+                      <strong>Held as pending:</strong> the attached photo's serial number
+                      ({result.ocrCheck.serialNumber || "unclear"}) doesn't match this
+                      meter's registered serial number — please verify before it's confirmed.
+                    </div>
+                  )}
+                  {result.ocrCheck?.serialStatus === "unverified" && (
+                    <div className="mt-2 text-danger">
+                      <i className="ti ti-alert-triangle me-1"></i>
+                      <strong>Held as pending:</strong> couldn't confidently read a serial
+                      number off the attached photo — please verify this reading is for the
+                      right meter before it's confirmed.
+                    </div>
+                  )}
                   {result.flag && (
                     <div className="mt-2 text-danger">
                       <i className="ti ti-flag me-1"></i>

@@ -6,9 +6,6 @@ import { toastify } from "../../../../../utils/toast";
 import { getInvoicesURL } from "../../../../../utils/urls";
 
 const formatKES = (amount) => `KES ${Number(amount || 0).toLocaleString()}`;
-
-// Same synthetic invoice-number scheme as view_invoice.js/invoices.js —
-// kept in sync so the number shown here matches everywhere else.
 function buildInvoiceNo(invoice) {
   if (!invoice?._id) return "—";
   const created = new Date(invoice.createdAt || Date.now());
@@ -27,12 +24,6 @@ function formatKenyanPhone(phone) {
 function isValidKenyanPhone(phone) {
   return /^254\d{9}$/.test(phone);
 }
-
-// Standalone "Pay Invoice" page — was previously an always-visible card,
-// then a modal, now its own route (/invoices/:id/pay) per request. Bundles
-// the three payment paths: manual check against the C2B webhook, an
-// explicit STK push to the resident's phone (polled for the result since
-// there's no push channel of our own), and staff-recorded cash.
 function PayInvoicePage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -57,7 +48,9 @@ function PayInvoicePage() {
       const res = await makeAuthRequest(`${getInvoicesURL}/${id}`, "GET");
       if (res.success) {
         setInvoice(res.data.invoice);
-        setStkPhone((prev) => prev || res.data.invoice?.residentId?.phone || "");
+        setStkPhone(
+          (prev) => prev || res.data.invoice?.residentId?.phone || "",
+        );
       } else {
         toastify(res.error, "error");
         navigate("/invoices");
@@ -76,9 +69,7 @@ function PayInvoicePage() {
         "GET",
       );
       if (res.success) setPaymentInfo(res.data);
-    } catch (err) {
-      // Non-fatal — the page just shows "—" for account/paybill if this fails.
-    }
+    } catch (err) {}
   };
 
   useEffect(() => {
@@ -248,10 +239,7 @@ function PayInvoicePage() {
         </div>
       </div>
 
-      <div
-        className="card mb-3"
-        style={{ borderRadius: 0 }}
-      >
+      <div className="card mb-3" style={{ borderRadius: 0 }}>
         <div className="card-header d-flex align-items-center justify-content-between">
           <Link to={`/invoices/${id}`}>
             <i className="ti ti-arrow-narrow-left me-1"></i>Back to Invoice
@@ -304,7 +292,10 @@ function PayInvoicePage() {
               </table>
             )}
             {paymentInfo && !paymentInfo.paybillShortCode && (
-              <div className="alert alert-warning py-2 mb-3" style={{ borderRadius: 0 }}>
+              <div
+                className="alert alert-warning py-2 mb-3"
+                style={{ borderRadius: 0 }}
+              >
                 <i className="ti ti-alert-triangle me-1"></i>
                 This facility has no Paybill shortcode set — add one under
                 Facilities → Edit → Tariff Plan.
@@ -391,8 +382,7 @@ function PayInvoicePage() {
                 style={{ borderRadius: 0 }}
                 onClick={() => setShowCashForm(true)}
               >
-                <i className="ti ti-cash-banknote me-2"></i>Record Cash
-                Payment
+                <i className="ti ti-cash-banknote me-2"></i>Record Cash Payment
               </button>
             ) : (
               <div>
@@ -428,7 +418,10 @@ function PayInvoicePage() {
             )}
 
             {invoice.status === "Paid" && (
-              <div className="alert alert-success mt-3" style={{ borderRadius: 0 }}>
+              <div
+                className="alert alert-success mt-3"
+                style={{ borderRadius: 0 }}
+              >
                 <i className="ti ti-circle-check me-2"></i>
                 This invoice is already fully paid.
               </div>

@@ -5,26 +5,8 @@ const {
   getValidationStatusesForReadings,
 } = require("../../services/validationStatusService");
 
-// ─────────────────────────────────────────────────────────────────────────
-// Roadmap Phase 8, #3 — "each resident has a running statement of account,
-// viewable any time — every bill, payment and receipt in one place."
-// Extends the existing per-invoice public-link pattern (public_bill.js) to
-// a resident-level token instead: one link, valid for every invoice that
-// resident has ever had, rather than a fresh single-invoice link each time.
-// Deliberately still no real resident authentication — consistent with the
-// rest of this app's "no resident login" design decision.
-// ─────────────────────────────────────────────────────────────────────────
 const TOKEN_TTL_DAYS = 90;
 
-/**
- * Idempotently ensures a resident has a live public statement token,
- * generating (or regenerating, if expired) one lazily on first use rather
- * than at resident-creation time, so residents who are never sent a bill
- * never get a token at all. Exported so invoice-notification code
- * (invoiceNotificationService.js) can eagerly attach a statement link to
- * every bill notification, the same way it already does for that single
- * invoice's own public link.
- */
 async function ensureResidentPublicToken(resident) {
   const now = new Date();
   if (
@@ -35,7 +17,9 @@ async function ensureResidentPublicToken(resident) {
     return resident.publicToken;
   }
   const token = crypto.randomBytes(24).toString("hex");
-  const expiresAt = new Date(now.getTime() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(
+    now.getTime() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
+  );
   await db.Resident.findByIdAndUpdate(resident._id, {
     publicToken: token,
     publicTokenExpiresAt: expiresAt,
@@ -43,25 +27,24 @@ async function ensureResidentPublicToken(resident) {
   return token;
 }
 
-/**
- * GET /public/statement/:token — NO AUTH.
- * Resident-facing running statement: every invoice ever billed to this
- * resident (any facility/unit — a resident is scoped to one already, but
- * this doesn't assume that stays true forever), current outstanding
- * balance, and each invoice's AI-validation status. Same curated,
- * low-PII shape as the single-invoice public_bill.js endpoint.
- */
 const getPublicStatement = async (req, res) => {
   try {
-    const resident = await db.Resident.findOne({ publicToken: req.params.token })
+    const resident = await db.Resident.findOne({
+      publicToken: req.params.token,
+    })
       .populate("unitId", "name")
       .populate("facilityId", "name")
       .lean();
 
-    if (!resident) return res.status(404).send({ error: "Statement link not found" });
-    if (resident.publicTokenExpiresAt && resident.publicTokenExpiresAt < new Date()) {
+    if (!resident)
+      return res.status(404).send({ error: "Statement link not found" });
+    if (
+      resident.publicTokenExpiresAt &&
+      resident.publicTokenExpiresAt < new Date()
+    ) {
       return res.status(410).send({
-        error: "This statement link has expired. Please contact your facility manager for a new one.",
+        error:
+          "This statement link has expired. Please contact your facility manager for a new one.",
       });
     }
 
@@ -73,13 +56,21 @@ const getPublicStatement = async (req, res) => {
         .populate("meterId", "serialNumber")
         .lean(),
       Invoice.aggregate([
-        { $match: { residentId: resident._id, status: { $nin: ["Paid", "Void", "Held"] } } },
-        { $group: { _id: null, total: { $sum: { $ifNull: ["$balance", "$totalAmount"] } } } },
+        {
+          $match: {
+            residentId: resident._id,
+            status: { $nin: ["Paid", "Void", "Held"] },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ["$balance", "$totalAmount"] } },
+          },
+        },
       ]),
     ]);
 
-    // Held invoices are deliberately omitted entirely (Roadmap Phase 8, #1)
-    // — the resident isn't meant to see a bill that's still under review.
     const visibleInvoices = invoices.filter((inv) => inv.status !== "Held");
 
     const statusMap = await getValidationStatusesForReadings(

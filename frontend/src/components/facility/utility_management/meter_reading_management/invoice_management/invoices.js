@@ -441,10 +441,6 @@ function EditInvoiceModal({ invoice, onClose, onSaved }) {
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : "—");
 
-// Export panel — filter the already-fetched invoice list by status/date
-// range, preview the totals, then download as Excel/PDF/CSV. Mirrors
-// app_main's ExportFilterPanel, scaled down to what DAMR tracks (no levy
-// types/contracts/quarters here — just status + a period date range).
 function ExportInvoicesModal({ invoices, onClose }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -733,11 +729,6 @@ function AllInvoicesTab() {
       inv.unitId?.name?.toLowerCase().includes(search.toLowerCase()),
   );
   const sorted = sortInvoices(filtered, sortField, sortDir);
-
-  // Stats computed over every invoice currently fetched (not just the
-  // filtered/sorted view) — mirrors app_main's InvoiceManagement.js summary
-  // cards (total billed / collected / outstanding), adapted to what DAMR
-  // actually tracks (no separate "units with active levy" concept here).
   const nonVoid = invoices.filter((inv) => inv.status !== "Void");
   const stats = {
     total: invoices.length,

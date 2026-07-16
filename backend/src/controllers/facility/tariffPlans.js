@@ -183,8 +183,6 @@ const deleteTariffPlan = async (req, res) => {
   try {
     const { id } = req.params;
     const TariffPlan = getTariffPlan();
-    // Soft-delete only — invoices already reference this plan by id for
-    // audit purposes, so it shouldn't disappear from history.
     const plan = await TariffPlan.findByIdAndUpdate(
       id,
       { active: false },

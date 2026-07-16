@@ -32,10 +32,6 @@ const DEFAULT_TARIFF_PLAN = {
   reminderDaysBefore: 3,
   paybillShortCode: "",
 };
-
-// One shared <style> block for every soft-styled table/search input on this
-// page — a soft blue header, faint zebra striping, and a pill-shaped search
-// box, instead of the default harsher Bootstrap table/input look.
 const SoftTableStyles = () => (
   <style>{`
         .dmr-soft-table thead th {
@@ -69,9 +65,6 @@ const SoftTableStyles = () => (
     `}</style>
 );
 
-// Clickable column header — click once to sort ascending on that field,
-// click again to flip to descending, click a different header to switch
-// fields (always starting ascending on the new one).
 const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
   const active = sortField === field;
   const [hover, setHover] = useState(false);
@@ -109,8 +102,6 @@ const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
   );
 };
 
-// Generic comparator driving every sortable column on the All Facilities
-// table. "index" sorts by the order facilities were fetched in.
 function sortFacilities(list, field, dir) {
   if (field === "index") {
     return dir === "asc" ? list : [...list].reverse();
@@ -233,18 +224,52 @@ function AllFacilitiesTab({ onEdit }) {
           <table className="table table-hover dmr-soft-table">
             <thead>
               <tr>
-                <SortableHeader label="#" field="index" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="Name" field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="Location" field="location" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="Sub-Division" field="subDivision" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="KRA/eTims Account #" field="accountNumber" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader
+                  label="#"
+                  field="index"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Name"
+                  field="name"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Location"
+                  field="location"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Sub-Division"
+                  field="subDivision"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="KRA/eTims Account #"
+                  field="accountNumber"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((f, i) => (
                 <tr key={f._id}>
-                  <td>{sortField === "index" && sortDir === "desc" ? sorted.length - i : i + 1}</td>
+                  <td>
+                    {sortField === "index" && sortDir === "desc"
+                      ? sorted.length - i
+                      : i + 1}
+                  </td>
                   <td>
                     <strong>{f.name}</strong>
                   </td>
@@ -254,7 +279,9 @@ function AllFacilitiesTab({ onEdit }) {
                     {f.accountNumber && f.accountNumber !== f.dbName ? (
                       f.accountNumber
                     ) : (
-                      <span className="badge bg-light-warning">Not yet assigned</span>
+                      <span className="badge bg-light-warning">
+                        Not yet assigned
+                      </span>
                     )}
                   </td>
                   <td>
@@ -281,8 +308,6 @@ function AllFacilitiesTab({ onEdit }) {
   );
 }
 
-// Dynamic band editor for the tariff plan — first N-1 rows have a finite
-// "up to" ceiling, the last row is always unbounded ("and above").
 function TariffBandEditor({ bands, onChange }) {
   const updateBand = (idx, field, value) => {
     const next = bands.map((b, i) =>
@@ -293,8 +318,7 @@ function TariffBandEditor({ bands, onChange }) {
 
   const addBand = () => {
     const last = bands[bands.length - 1];
-    const priorCeiling =
-      bands.length >= 2 ? bands[bands.length - 2].upTo : 0;
+    const priorCeiling = bands.length >= 2 ? bands[bands.length - 2].upTo : 0;
     const suggestedCeiling = (priorCeiling || 0) + 5;
     const next = [
       ...bands.slice(0, -1),
@@ -389,18 +413,8 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
     accountNumber: "",
     taxNumber: "",
   });
-  // Facility -> Block/Court/Tower/Wing hierarchy is no longer registered
-  // here — it's set up afterward from the "Block/Phase/Tower/Courts"
-  // section (units.js) once the facility exists. Creation still sends an
-  // empty blockGroups array since payservedb's createFacility requires the
-  // field to be present (an empty array is its valid "no groups yet" answer).
   const [tariffPlan, setTariffPlan] = useState(DEFAULT_TARIFF_PLAN);
   const [loading, setLoading] = useState(false);
-
-  // Daraja credentials — forwarded once to the Payments microservice
-  // (POST /v1/addPaymentDetails) so it can send a real STK push on this
-  // facility's behalf. Never saved in DAMR's own database; this state only
-  // lives in the browser for the duration of the registration action.
   const [paymentCreds, setPaymentCreds] = useState({
     consumerKey: "",
     consumerSecret: "",
@@ -511,13 +525,6 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
       const url = editing ? `${FACILITIES_URL}/${editing._id}` : FACILITIES_URL;
       const method = editing ? "PUT" : "POST";
 
-      // accountNumber has a unique (but not sparse) index on the Facility
-      // model — sending an empty string would risk colliding with any other
-      // facility also left blank. Only send it when the staff member has
-      // actually typed a real value; omitting the key entirely leaves
-      // whatever's currently stored (including the auto-placeholder)
-      // untouched. createFacility always ignores this field anyway (it
-      // assigns its own placeholder), so this only matters on edit.
       const payload = { ...form };
       if (payload.accountNumber?.trim()) {
         payload.accountNumber = payload.accountNumber.trim();
@@ -525,12 +532,6 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
         delete payload.accountNumber;
       }
       payload.taxNumber = payload.taxNumber?.trim() || null;
-
-      // Block/Court/Tower hierarchy is no longer registered on this form —
-      // it's set up afterward from the "Block/Phase/Tower/Courts" section.
-      // createFacility still requires blockGroups to be present, so send an
-      // empty array (its documented "no groups yet" answer); blockLabel is
-      // left unset so the backend falls back to its own default ("Block").
       if (!editing) {
         payload.blockGroups = [];
       }
@@ -542,11 +543,6 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
       }
 
       const facilityId = editing ? editing._id : res.data.facility?._id;
-
-      // Every save creates a new tariff plan version for the facility — the
-      // backend automatically deactivates the previous one, so old invoices
-      // keep referencing the plan that was actually active when they were
-      // generated (audit trail), while billing going forward uses this one.
       if (facilityId) {
         const planRes = await makeAuthRequest(TARIFF_PLANS_URL, "POST", {
           name: `${form.name} — ${new Date().toLocaleDateString()}`,
@@ -586,40 +582,49 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
       setLoading(false);
     }
   };
-
-  // One-time action: registers this facility's Daraja credentials with the
-  // Payments microservice so residents can be sent a real STK push from the
-  // invoice page. Separate from Save — these secrets aren't part of the
-  // tariff plan and are never stored in DAMR's own database. Leaving the
-  // credential fields blank registers the facility against PayServe's own
-  // default Daraja app instead — a facility only needs its own credentials
-  // if it has a separate Paybill/app of its own.
   const handleRegisterPaymentDetails = async () => {
     if (!editing) {
-      toastify("Save the facility first, then register payment details", "error");
+      toastify(
+        "Save the facility first, then register payment details",
+        "error",
+      );
       return;
     }
     if (!tariffPlan.paybillShortCode?.trim()) {
       toastify("Set a Paybill Shortcode above before registering", "error");
       return;
     }
-    const partiallyFilled =
-      [paymentCreds.consumerKey, paymentCreds.consumerSecret, paymentCreds.passkey].filter(Boolean).length;
+    const partiallyFilled = [
+      paymentCreds.consumerKey,
+      paymentCreds.consumerSecret,
+      paymentCreds.passkey,
+    ].filter(Boolean).length;
     if (partiallyFilled > 0 && partiallyFilled < 3) {
-      toastify("Fill in all three credential fields, or leave all blank to use PayServe's default", "error");
+      toastify(
+        "Fill in all three credential fields, or leave all blank to use PayServe's default",
+        "error",
+      );
       return;
     }
     try {
       setRegisteringPayment(true);
-      const res = await makeAuthRequest("/api/v1/damr/facility/payment-details", "POST", {
-        facilityId: editing._id,
-        shortCode: tariffPlan.paybillShortCode.trim(),
-        passkey: paymentCreds.passkey || undefined,
-        consumerKey: paymentCreds.consumerKey || undefined,
-        consumerSecret: paymentCreds.consumerSecret || undefined,
-      });
+      const res = await makeAuthRequest(
+        "/api/v1/damr/facility/payment-details",
+        "POST",
+        {
+          facilityId: editing._id,
+          shortCode: tariffPlan.paybillShortCode.trim(),
+          passkey: paymentCreds.passkey || undefined,
+          consumerKey: paymentCreds.consumerKey || undefined,
+          consumerSecret: paymentCreds.consumerSecret || undefined,
+        },
+      );
       if (res.success) {
-        toastify(res.data.message || "Payment details registered with the Payments microservice", "success");
+        toastify(
+          res.data.message ||
+            "Payment details registered with the Payments microservice",
+          "success",
+        );
         setPaymentCreds({ consumerKey: "", consumerSecret: "", passkey: "" });
       } else {
         toastify(res.error, "error");
@@ -677,7 +682,8 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
               }
             />
             <div className="form-text">
-              Start typing to see suggestions — picking one also fills in Location/County/Town below.
+              Start typing to see suggestions — picking one also fills in
+              Location/County/Town below.
             </div>
           </div>
           <div className="mb-3">
@@ -746,8 +752,9 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
                   onChange={handleChange}
                 />
                 <div className="form-text">
-                  Auto-assigned a placeholder until a real number is set here. Must be
-                  unique across facilities — leave unchanged if not yet assigned.
+                  Auto-assigned a placeholder until a real number is set here.
+                  Must be unique across facilities — leave unchanged if not yet
+                  assigned.
                 </div>
               </div>
               <div className="col-md-6 mb-3">
@@ -775,8 +782,8 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
               }
             />
             <small className="text-muted">
-              e.g. 180/m&sup3; up to 6m&sup3;, then 205/m&sup3; above — leave
-              a single unbounded band for a flat rate.
+              e.g. 180/m&sup3; up to 6m&sup3;, then 205/m&sup3; above — leave a
+              single unbounded band for a flat rate.
             </small>
           </div>
           <div className="row">
@@ -843,8 +850,8 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
                 }
               />
               <div className="form-text">
-                Must match the shortcode already registered for this facility
-                in the Payments system. Leave blank if not yet provisioned.
+                Must match the shortcode already registered for this facility in
+                the Payments system. Leave blank if not yet provisioned.
               </div>
             </div>
           </div>
@@ -853,43 +860,55 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
             <div className="card border-secondary mb-3">
               <div className="card-header bg-light">
                 <h6 className="mb-0">
-                  <i className="ti ti-key me-2"></i>Register STK Push (M-Pesa Daraja credentials)
+                  <i className="ti ti-key me-2"></i>Register STK Push (M-Pesa
+                  Daraja credentials)
                 </h6>
               </div>
               <div className="card-body">
                 <p className="text-muted small mb-2">
-                  One-time action — forwards credentials to PayServe's shared Payments
-                  microservice so residents can be sent a real STK push from the invoice
-                  page. Not stored in DAMR's own database.
+                  One-time action — forwards credentials to PayServe's shared
+                  Payments microservice so residents can be sent a real STK push
+                  from the invoice page. Not stored in DAMR's own database.
                 </p>
                 <p className="text-muted small mb-2">
                   <i className="ti ti-info-circle me-1"></i>
-                  Leave all three fields blank to register using <strong>PayServe's
-                  default Daraja credentials</strong>. Only fill these in if this facility
-                  has its own separate Paybill/Daraja app.
+                  Leave all three fields blank to register using{" "}
+                  <strong>PayServe's default Daraja credentials</strong>. Only
+                  fill these in if this facility has its own separate
+                  Paybill/Daraja app.
                 </p>
                 <div className="row">
                   <div className="col-md-6 mb-2">
-                    <label className="form-label">Consumer Key (optional)</label>
+                    <label className="form-label">
+                      Consumer Key (optional)
+                    </label>
                     <input
                       type="text"
                       className="form-control"
                       placeholder="Leave blank for PayServe default"
                       value={paymentCreds.consumerKey}
                       onChange={(e) =>
-                        setPaymentCreds((prev) => ({ ...prev, consumerKey: e.target.value }))
+                        setPaymentCreds((prev) => ({
+                          ...prev,
+                          consumerKey: e.target.value,
+                        }))
                       }
                     />
                   </div>
                   <div className="col-md-6 mb-2">
-                    <label className="form-label">Consumer Secret (optional)</label>
+                    <label className="form-label">
+                      Consumer Secret (optional)
+                    </label>
                     <input
                       type="password"
                       className="form-control"
                       placeholder="Leave blank for PayServe default"
                       value={paymentCreds.consumerSecret}
                       onChange={(e) =>
-                        setPaymentCreds((prev) => ({ ...prev, consumerSecret: e.target.value }))
+                        setPaymentCreds((prev) => ({
+                          ...prev,
+                          consumerSecret: e.target.value,
+                        }))
                       }
                     />
                   </div>
@@ -901,7 +920,10 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
                       placeholder="Leave blank for PayServe default"
                       value={paymentCreds.passkey}
                       onChange={(e) =>
-                        setPaymentCreds((prev) => ({ ...prev, passkey: e.target.value }))
+                        setPaymentCreds((prev) => ({
+                          ...prev,
+                          passkey: e.target.value,
+                        }))
                       }
                     />
                   </div>
@@ -912,10 +934,17 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
                   onClick={handleRegisterPaymentDetails}
                   disabled={registeringPayment}
                 >
-                  {registeringPayment
-                    ? <><span className="spinner-border spinner-border-sm me-2"></span>Registering...</>
-                    : <><i className="ti ti-plug-connected me-2"></i>Register Payment Details</>
-                  }
+                  {registeringPayment ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2"></span>
+                      Registering...
+                    </>
+                  ) : (
+                    <>
+                      <i className="ti ti-plug-connected me-2"></i>Register
+                      Payment Details
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -952,7 +981,8 @@ function FacilityFormTab({ editing, onSuccess, onCancelEdit }) {
                 }
               />
               <div className="form-text">
-                Also reminds on the due date itself; overdue reminders continue daily after.
+                Also reminds on the due date itself; overdue reminders continue
+                daily after.
               </div>
             </div>
             <div className="col-md-3 mb-3">
@@ -1041,12 +1071,6 @@ function scopeLabel(plan) {
   if (plan.unitType) return `Category: ${plan.unitType}`;
   return "Facility default";
 }
-
-// Roadmap Phase 8, #20 — a facility can now have more than one active plan
-// at once (a default, plus optional narrower per-block/per-category
-// plans), so this is a standalone list+create view rather than the single
-// embedded editor on the Facility form (which only ever manages the
-// facility-wide default).
 function TariffPlansTab() {
   const [facilities, setFacilities] = useState([]);
   const [facilityId, setFacilityId] = useState("");
@@ -1074,7 +1098,10 @@ function TariffPlansTab() {
     }
     try {
       setLoading(true);
-      const res = await makeAuthRequest(`${TARIFF_PLANS_URL}?facilityId=${fid}`, "GET");
+      const res = await makeAuthRequest(
+        `${TARIFF_PLANS_URL}?facilityId=${fid}`,
+        "GET",
+      );
       if (res.success) setPlans(res.data.plans || []);
       else toastify(res.error, "error");
     } catch (err) {
@@ -1089,7 +1116,10 @@ function TariffPlansTab() {
     setFacilityId(fid);
     setBlockId("");
     if (fid) {
-      const res = await makeAuthRequest(`${BLOCKS_URL}?facilityId=${fid}`, "GET");
+      const res = await makeAuthRequest(
+        `${BLOCKS_URL}?facilityId=${fid}`,
+        "GET",
+      );
       if (res.success) setBlocks(res.data.blocks || []);
       else setBlocks([]);
       fetchPlans(fid);
@@ -1167,7 +1197,10 @@ function TariffPlansTab() {
 
   const handleDeactivate = async (planId) => {
     try {
-      const res = await makeAuthRequest(`${TARIFF_PLANS_URL}/${planId}`, "DELETE");
+      const res = await makeAuthRequest(
+        `${TARIFF_PLANS_URL}/${planId}`,
+        "DELETE",
+      );
       if (res.success) {
         toastify("Plan deactivated", "success");
         fetchPlans(facilityId);
@@ -1185,10 +1218,16 @@ function TariffPlansTab() {
         <div className="col-md-10">
           <div className="mb-3">
             <label className="form-label">Facility</label>
-            <select className="form-select" value={facilityId} onChange={handleFacilityChange}>
+            <select
+              className="form-select"
+              value={facilityId}
+              onChange={handleFacilityChange}
+            >
               <option value="">Select facility...</option>
               {facilities.map((f) => (
-                <option key={f._id} value={f._id}>{f.name}</option>
+                <option key={f._id} value={f._id}>
+                  {f.name}
+                </option>
               ))}
             </select>
           </div>
@@ -1197,15 +1236,23 @@ function TariffPlansTab() {
             <>
               <div className="card mb-4">
                 <div className="card-header">
-                  <h6 className="mb-0">Active &amp; past plans for this facility</h6>
+                  <h6 className="mb-0">
+                    Active &amp; past plans for this facility
+                  </h6>
                 </div>
                 <div className="card-body">
                   {loading ? (
                     <div className="text-center py-3">
-                      <div className="spinner-border spinner-border-sm text-primary" role="status"></div>
+                      <div
+                        className="spinner-border spinner-border-sm text-primary"
+                        role="status"
+                      ></div>
                     </div>
                   ) : plans.length === 0 ? (
-                    <p className="text-muted mb-0">No tariff plans configured yet — billing falls back to the flat default rate.</p>
+                    <p className="text-muted mb-0">
+                      No tariff plans configured yet — billing falls back to the
+                      flat default rate.
+                    </p>
                   ) : (
                     <div className="table-responsive">
                       <table className="table table-sm align-middle mb-0">
@@ -1224,12 +1271,21 @@ function TariffPlansTab() {
                               <td>{p.name}</td>
                               <td>{scopeLabel(p)}</td>
                               <td>
-                                {p.bands?.length} band{p.bands?.length === 1 ? "" : "s"}, KES{" "}
-                                {Math.min(...(p.bands || []).map((b) => b.rate))}–
-                                {Math.max(...(p.bands || []).map((b) => b.rate))}/m³
+                                {p.bands?.length} band
+                                {p.bands?.length === 1 ? "" : "s"}, KES{" "}
+                                {Math.min(
+                                  ...(p.bands || []).map((b) => b.rate),
+                                )}
+                                –
+                                {Math.max(
+                                  ...(p.bands || []).map((b) => b.rate),
+                                )}
+                                /m³
                               </td>
                               <td>
-                                <span className={`badge ${p.active ? "bg-light-success" : "bg-light-secondary"}`}>
+                                <span
+                                  className={`badge ${p.active ? "bg-light-success" : "bg-light-secondary"}`}
+                                >
                                   {p.active ? "Active" : "Inactive"}
                                 </span>
                               </td>
@@ -1268,7 +1324,12 @@ function TariffPlansTab() {
                           checked={scope === SCOPE_FACILITY}
                           onChange={() => setScope(SCOPE_FACILITY)}
                         />
-                        <label className="form-check-label" htmlFor="scopeFacility">Facility default</label>
+                        <label
+                          className="form-check-label"
+                          htmlFor="scopeFacility"
+                        >
+                          Facility default
+                        </label>
                       </div>
                       <div className="form-check">
                         <input
@@ -1278,7 +1339,12 @@ function TariffPlansTab() {
                           checked={scope === SCOPE_BLOCK}
                           onChange={() => setScope(SCOPE_BLOCK)}
                         />
-                        <label className="form-check-label" htmlFor="scopeBlock">Specific block</label>
+                        <label
+                          className="form-check-label"
+                          htmlFor="scopeBlock"
+                        >
+                          Specific block
+                        </label>
                       </div>
                       <div className="form-check">
                         <input
@@ -1288,25 +1354,39 @@ function TariffPlansTab() {
                           checked={scope === SCOPE_UNIT_TYPE}
                           onChange={() => setScope(SCOPE_UNIT_TYPE)}
                         />
-                        <label className="form-check-label" htmlFor="scopeUnitType">Unit category</label>
+                        <label
+                          className="form-check-label"
+                          htmlFor="scopeUnitType"
+                        >
+                          Unit category
+                        </label>
                       </div>
                     </div>
                     <small className="text-muted">
-                      Billing resolves the most specific match first: unit category → block → facility default.
+                      Billing resolves the most specific match first: unit
+                      category → block → facility default.
                     </small>
                   </div>
 
                   {scope === SCOPE_BLOCK && (
                     <div className="mb-3">
                       <label className="form-label">Block</label>
-                      <select className="form-select" value={blockId} onChange={(e) => setBlockId(e.target.value)}>
+                      <select
+                        className="form-select"
+                        value={blockId}
+                        onChange={(e) => setBlockId(e.target.value)}
+                      >
                         <option value="">Select block...</option>
                         {blocks.map((b) => (
-                          <option key={b._id} value={b._id}>{b.name}</option>
+                          <option key={b._id} value={b._id}>
+                            {b.name}
+                          </option>
                         ))}
                       </select>
                       {blocks.length === 0 && (
-                        <small className="text-muted">No blocks set up for this facility yet.</small>
+                        <small className="text-muted">
+                          No blocks set up for this facility yet.
+                        </small>
                       )}
                     </div>
                   )}
@@ -1314,10 +1394,16 @@ function TariffPlansTab() {
                   {scope === SCOPE_UNIT_TYPE && (
                     <div className="mb-3">
                       <label className="form-label">Unit Category</label>
-                      <select className="form-select" value={unitType} onChange={(e) => setUnitType(e.target.value)}>
+                      <select
+                        className="form-select"
+                        value={unitType}
+                        onChange={(e) => setUnitType(e.target.value)}
+                      >
                         <option value="">Select category...</option>
                         {UNIT_TYPE_OPTIONS.map((t) => (
-                          <option key={t} value={t}>{t}</option>
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -1336,7 +1422,9 @@ function TariffPlansTab() {
                   <label className="form-label">Water rate bands</label>
                   <TariffBandEditor
                     bands={tariffPlan.bands}
-                    onChange={(bands) => setTariffPlan((prev) => ({ ...prev, bands }))}
+                    onChange={(bands) =>
+                      setTariffPlan((prev) => ({ ...prev, bands }))
+                    }
                   />
 
                   <div className="row mt-3">
@@ -1348,19 +1436,27 @@ function TariffPlansTab() {
                         className="form-control"
                         value={tariffPlan.minimumCharge}
                         onChange={(e) =>
-                          setTariffPlan((prev) => ({ ...prev, minimumCharge: e.target.value }))
+                          setTariffPlan((prev) => ({
+                            ...prev,
+                            minimumCharge: e.target.value,
+                          }))
                         }
                       />
                     </div>
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Sewerage Rate (% of water charge)</label>
+                      <label className="form-label">
+                        Sewerage Rate (% of water charge)
+                      </label>
                       <input
                         type="number"
                         min="0"
                         className="form-control"
                         value={tariffPlan.sewerageRatePercent}
                         onChange={(e) =>
-                          setTariffPlan((prev) => ({ ...prev, sewerageRatePercent: e.target.value }))
+                          setTariffPlan((prev) => ({
+                            ...prev,
+                            sewerageRatePercent: e.target.value,
+                          }))
                         }
                       />
                     </div>
@@ -1372,38 +1468,55 @@ function TariffPlansTab() {
                         className="form-control"
                         value={tariffPlan.techFee}
                         onChange={(e) =>
-                          setTariffPlan((prev) => ({ ...prev, techFee: e.target.value }))
+                          setTariffPlan((prev) => ({
+                            ...prev,
+                            techFee: e.target.value,
+                          }))
                         }
                       />
                     </div>
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Due Date Offset (days)</label>
+                      <label className="form-label">
+                        Due Date Offset (days)
+                      </label>
                       <input
                         type="number"
                         min="0"
                         className="form-control"
                         value={tariffPlan.dueDateOffsetDays}
                         onChange={(e) =>
-                          setTariffPlan((prev) => ({ ...prev, dueDateOffsetDays: e.target.value }))
+                          setTariffPlan((prev) => ({
+                            ...prev,
+                            dueDateOffsetDays: e.target.value,
+                          }))
                         }
                       />
                     </div>
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Reminder Lead Time (days)</label>
+                      <label className="form-label">
+                        Reminder Lead Time (days)
+                      </label>
                       <input
                         type="number"
                         min="0"
                         className="form-control"
                         value={tariffPlan.reminderDaysBefore}
                         onChange={(e) =>
-                          setTariffPlan((prev) => ({ ...prev, reminderDaysBefore: e.target.value }))
+                          setTariffPlan((prev) => ({
+                            ...prev,
+                            reminderDaysBefore: e.target.value,
+                          }))
                         }
                       />
                     </div>
                   </div>
 
                   <div className="text-end">
-                    <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleCreate}
+                      disabled={saving}
+                    >
                       {saving ? "Saving..." : "Create Plan"}
                     </button>
                   </div>

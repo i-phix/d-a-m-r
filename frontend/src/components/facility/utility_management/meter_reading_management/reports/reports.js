@@ -25,7 +25,6 @@ const FACILITIES_URL = "/api/v1/damr/facility/facilities";
 
 const formatCurrency = (amount) => `KES ${Number(amount || 0).toLocaleString()}`;
 
-// ── Shared facility filter dropdown ─────────────────────────────────────
 function useFacilities() {
   const [facilities, setFacilities] = useState([]);
   useEffect(() => {
@@ -55,9 +54,6 @@ function FacilitySelect({ value, onChange, facilities, includeAll = true }) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// TAB 1 — Arrears Ageing
-// ══════════════════════════════════════════════════════════════════════
 function ArrearsAgeingTab() {
   const facilities = useFacilities();
   const [facilityId, setFacilityId] = useState("");
@@ -164,10 +160,6 @@ function ArrearsAgeingTab() {
     </div>
   );
 }
-
-// ══════════════════════════════════════════════════════════════════════
-// TAB 2 — Defaulters
-// ══════════════════════════════════════════════════════════════════════
 function DefaultersTab() {
   const facilities = useFacilities();
   const [facilityId, setFacilityId] = useState("");
@@ -271,9 +263,6 @@ function DefaultersTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// TAB 3 — Consumption Trends
-// ══════════════════════════════════════════════════════════════════════
 function ConsumptionTrendsTab() {
   const facilities = useFacilities();
   const [facilityId, setFacilityId] = useState("");
@@ -385,10 +374,6 @@ function ConsumptionTrendsTab() {
     </div>
   );
 }
-
-// ══════════════════════════════════════════════════════════════════════
-// TAB 4 — Non-Revenue Water (NRW)
-// ══════════════════════════════════════════════════════════════════════
 function NRWTab() {
   const facilities = useFacilities();
   const [facilityId, setFacilityId] = useState("");

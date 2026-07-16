@@ -5,29 +5,17 @@ const { isEnabled, callGeminiVision } = require("./aiMessageService");
 const CONFIDENCE_THRESHOLD = 0.75;
 const MAX_IMAGE_WIDTH = 1280;
 const MAX_IMAGE_HEIGHT = 1280;
-
-// Gemini reports confidence as a label, not a number — map to the same
-// 0-1 scale the rest of the app (CONFIDENCE_THRESHOLD, ocrConfidence field
-// on Reading) already expects.
 const CONFIDENCE_MAP = { high: 0.95, medium: 0.75, low: 0.4 };
-
-// Previously this pipeline ran generic Google Cloud Vision TEXT_DETECTION
-// over the whole photo, then picked whichever numeric-looking substring in
-// the extracted text was longest (see git history). That had no idea which
-// part of the image was the meter's actual register vs. a barcode, serial
-// number, or spec-plate text — e.g. a printed "1622014156 2022.06" label
-// would win over the true register reading "00038" just because "2022.06"
-// is a longer string with a decimal point. Now a vision-capable Gemini
-// model looks at the photo directly and is told explicitly what to ignore.
 const METER_READING_PROMPT = `You are reading a physical utility meter (water, electricity, or gas) from a photo, for a residential billing system.
 
 The photo may contain SEVERAL different numbers — you must tell them apart:
-- The cumulative consumption reading, shown on the meter's own register: either a row of mechanical odometer/dial wheels, or a digital LCD/LED display. This is the ONLY number to report.
-- Do NOT use: the serial number, model/type code, manufacture or calibration date, barcode digits, QR code, or any spec-plate values (e.g. Qmax, Qmin, Qt, Pmax, Vc, accuracy class) printed on a label or plate elsewhere on the meter body. These are NOT the reading, even if they look numeric or decimal.
+- The cumulative consumption reading, shown on the meter's own register: either a row of mechanical odometer/dial wheels, or a digital LCD/LED display. This is the PRIMARY number to report.
+- The meter's serial number, ONLY if it happens to be legibly visible somewhere in this same photo — often printed near "SN", "Serial No.", "S/N", or stamped as a distinct code on the meter body. This is a separate, optional field used only to double check this photo is of the right meter — do not guess at it, and do not confuse it with the register reading.
+- Do NOT use: model/type codes, manufacture or calibration dates, barcode digits, QR code, or any spec-plate values (e.g. Qmax, Qmin, Qt, Pmax, Vc, accuracy class) as either the reading or the serial number.
 - Mechanical registers often show black digits (whole units) followed by red digits or a red-highlighted section (fractional units, e.g. liters). If so, combine them into one decimal number: black digits as the integer part, red digits as the decimal part (e.g. black "00038", red "16" -> 38.16).
 
 Respond with ONLY a raw JSON object, no markdown code fences, no extra commentary, in exactly this shape:
-{"reading": "<the numeric reading as a plain decimal string, or null if you cannot confidently identify the register>", "confidence": "high" | "medium" | "low", "notes": "<one short sentence on which digits you used and why>"}`;
+{"reading": "<the numeric reading as a plain decimal string, or null if you cannot confidently identify the register>", "confidence": "high" | "medium" | "low", "serialNumber": "<the meter's serial number as printed, or null if not visible/legible in this photo>", "serialConfidence": "high" | "medium" | "low", "notes": "<one short sentence on which digits you used and why>"}`;
 
 async function preprocessImage(imagePath) {
   const meta = await sharp(imagePath).metadata();
@@ -50,8 +38,6 @@ async function preprocessImage(imagePath) {
   return buffer.toString("base64");
 }
 
-// Gemini is asked for raw JSON but models sometimes wrap it in a ```json
-// fence anyway despite instructions — strip that defensively before parsing.
 function parseGeminiOcrResponse(text) {
   if (!text) return null;
   const cleaned = text
@@ -67,8 +53,38 @@ function parseGeminiOcrResponse(text) {
     return null;
   }
 }
+function normalizeSerial(s) {
+  return String(s || "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+}
 
-function buildResult({ reading, confidenceLabel, notes, rawText, error }) {
+function buildSerialFields(serialNumber, serialConfidenceLabel) {
+  const cleanSerial =
+    serialNumber && String(serialNumber).trim()
+      ? String(serialNumber).trim()
+      : null;
+  const serialConfidence =
+    CONFIDENCE_MAP[String(serialConfidenceLabel || "").toLowerCase()] ?? 0;
+  return {
+    serialNumber: cleanSerial,
+    serialConfidence,
+    serialMeetsThreshold:
+      cleanSerial !== null && serialConfidence >= CONFIDENCE_THRESHOLD,
+  };
+}
+
+function buildResult({
+  reading,
+  confidenceLabel,
+  notes,
+  rawText,
+  error,
+  serialNumber,
+  serialConfidenceLabel,
+}) {
+  const serialFields = buildSerialFields(serialNumber, serialConfidenceLabel);
+
   if (error) {
     return {
       value: null,
@@ -80,6 +96,7 @@ function buildResult({ reading, confidenceLabel, notes, rawText, error }) {
       notes: notes || "",
       source: "gemini_vision",
       error,
+      ...serialFields,
     };
   }
 
@@ -97,24 +114,31 @@ function buildResult({ reading, confidenceLabel, notes, rawText, error }) {
       digits: [],
       rawText: rawText || "",
       meterType: "unknown",
-      notes: notes || "Gemini could not confidently identify the register reading",
+      notes:
+        notes || "Gemini could not confidently identify the register reading",
       source: "gemini_vision",
       error: null,
+      ...serialFields,
     };
   }
 
-  const confidence = CONFIDENCE_MAP[String(confidenceLabel || "").toLowerCase()] ?? 0;
+  const confidence =
+    CONFIDENCE_MAP[String(confidenceLabel || "").toLowerCase()] ?? 0;
 
   return {
     value: validValue,
     confidence,
     meetsThreshold: confidence >= CONFIDENCE_THRESHOLD,
-    digits: String(validValue).replace(/[^0-9]/g, "").split("").filter(Boolean),
+    digits: String(validValue)
+      .replace(/[^0-9]/g, "")
+      .split("")
+      .filter(Boolean),
     rawText: rawText || String(reading),
     meterType: "unknown",
     notes: notes || "",
     source: "gemini_vision",
     error: null,
+    ...serialFields,
   };
 }
 
@@ -149,7 +173,7 @@ async function runOCRPipeline(imagePath) {
     }
 
     console.log(
-      `[OCR] Gemini read: "${parsed.reading ?? "none"}" | confidence: ${parsed.confidence ?? "?"} | ${parsed.notes ?? ""}`,
+      `[OCR] Gemini read: "${parsed.reading ?? "none"}" | confidence: ${parsed.confidence ?? "?"} | serial: "${parsed.serialNumber ?? "none"}" (${parsed.serialConfidence ?? "?"}) | ${parsed.notes ?? ""}`,
     );
 
     return buildResult({
@@ -157,6 +181,8 @@ async function runOCRPipeline(imagePath) {
       confidenceLabel: parsed.confidence,
       notes: parsed.notes,
       rawText: responseText,
+      serialNumber: parsed.serialNumber,
+      serialConfidenceLabel: parsed.serialConfidence,
     });
   } catch (err) {
     console.error("[OCR] pipeline error:", err.message);
@@ -170,8 +196,26 @@ async function runOCRPipeline(imagePath) {
       notes: "",
       source: "gemini_vision",
       error: err.message,
+      serialNumber: null,
+      serialConfidence: 0,
+      serialMeetsThreshold: false,
     };
   }
 }
 
-module.exports = { runOCRPipeline, extractReading: runOCRPipeline };
+function verifySerial(ocrResult, registeredSerial) {
+  if (!registeredSerial) return "unverified"; // nothing to compare against
+  if (!ocrResult?.serialNumber || !ocrResult.serialMeetsThreshold)
+    return "unverified";
+  return normalizeSerial(ocrResult.serialNumber) ===
+    normalizeSerial(registeredSerial)
+    ? "matched"
+    : "mismatch";
+}
+
+module.exports = {
+  runOCRPipeline,
+  extractReading: runOCRPipeline,
+  verifySerial,
+  normalizeSerial,
+};

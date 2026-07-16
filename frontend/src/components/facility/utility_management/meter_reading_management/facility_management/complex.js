@@ -19,9 +19,6 @@ const COMPLEX_TYPE_OPTIONS = [
   "Other",
 ];
 
-// One shared <style> block for every soft-styled table on this page — a
-// soft blue header and faint zebra striping, instead of the default
-// harsher Bootstrap table look.
 const SoftTableStyles = () => (
   <style>{`
         .dmr-soft-table thead th {

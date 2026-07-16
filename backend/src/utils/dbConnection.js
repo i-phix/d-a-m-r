@@ -3,14 +3,6 @@ const db = require("./coreSchemas");
 
 require("dotenv").config();
 
-// DAMR used to delegate its entire MongoDB connection lifecycle to the
-// external "payservedb" package's connectToMongoDB() helper. That package
-// is no longer a dependency (see backend/package.json) — this replicates
-// the exact same connection-string logic (same env vars, same
-// secured/unsecured branching) directly against mongoose, so behavior is
-// unchanged, just no longer borrowed from someone else's package.
-// (useNewUrlParser is intentionally left out — it's a no-op on modern
-// mongoose/the MongoDB driver and only produces a deprecation warning.)
 let isConnected = false;
 const connectDB = async () => {
   if (isConnected) {

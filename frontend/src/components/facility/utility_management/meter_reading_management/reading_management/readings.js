@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import axios from 'axios';
+import * as XLSX from 'xlsx';
 import Layout from '../../../../layout/Layout';
 import { makeAuthRequest } from '../../../../../utils/makeRequest';
 import { toastify } from '../../../../../utils/toast';
-import { getReadingsURL, getMyReadingsURL } from '../../../../../utils/urls';
-
-// ── Helpers ────────────────────────────────────────────────────────────
-
-// One shared <style> block for every soft-styled table/search input on this
-// page — a soft blue header, faint zebra striping, and a pill-shaped search
-// box, instead of the default harsher Bootstrap table/input look.
+import {
+    getReadingsURL,
+    getMyReadingsURL,
+    importReadingsURL,
+    importReadingsTemplateURL,
+    backend_url,
+} from '../../../../../utils/urls';
+import { getItem } from '../../../../../utils/localStorage';
 const SoftTableStyles = () => (
     <style>{`
         .dmr-soft-table thead th {
@@ -78,9 +81,6 @@ const MethodBadge = ({ method }) => {
     );
 };
 
-// Clickable column header — click once to sort ascending on that field,
-// click again to flip to descending, click a different header to switch
-// fields (always starting ascending on the new one).
 const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
     const active = sortField === field;
     const [hover, setHover] = useState(false);
@@ -115,11 +115,6 @@ const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
         </th>
     );
 };
-
-// Generic comparator driving every sortable column below. "index" sorts by
-// the order readings were fetched in (# reflects position in that order —
-// there's no separate field to sort by, so ascending = as-fetched,
-// descending = reversed).
 function sortReadings(list, field, dir) {
     if (field === 'index') {
         return dir === 'asc' ? list : [...list].reverse();
@@ -147,9 +142,6 @@ function sortReadings(list, field, dir) {
     });
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// TAB: All Readings (admin / editor)
-// ══════════════════════════════════════════════════════════════════════
 function AllReadingsTab() {
     const [readings, setReadings] = useState([]);
     const [loading,  setLoading]  = useState(false);
@@ -280,10 +272,6 @@ function AllReadingsTab() {
         </div>
     );
 }
-
-// ══════════════════════════════════════════════════════════════════════
-// TAB: My Readings (Staff)
-// ══════════════════════════════════════════════════════════════════════
 function MyReadingsTab() {
     const [readings, setReadings] = useState([]);
     const [loading,  setLoading]  = useState(false);
@@ -348,18 +336,514 @@ function MyReadingsTab() {
         </div>
     );
 }
+const IMPORT_READING_HEADER_MAP = {
+    meterserial: 'meterSerial',
+    serial: 'meterSerial',
+    serialnumber: 'meterSerial',
+    meter: 'meterSerial',
+    value: 'value',
+    readingvalue: 'value',
+    reading: 'value',
+    readingdate: 'readingDate',
+    date: 'readingDate',
+    notes: 'notes',
+    notesoptional: 'notes',
+    note: 'notes',
+};
 
-// ══════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ══════════════════════════════════════════════════════════════════════
+function normalizeReadingImportRow(raw) {
+    const row = {};
+    Object.entries(raw).forEach(([key, value]) => {
+        const normKey = String(key)
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_()\-‐‑‒–—]+/g, '');
+        const mapped = IMPORT_READING_HEADER_MAP[normKey];
+        if (!mapped) return;
+        row[mapped] = typeof value === 'string' ? value.trim() : value;
+    });
+    return row;
+}
+function isBlankReadingRow(row) {
+    return Object.entries(row).every(
+        ([key, v]) => key === 'readingDate' || String(v || '').trim() === '',
+    );
+}
+
+function ImportReadingsTab({ onSuccess }) {
+    const csvInputRef = useRef(null);
+    const excelInputRef = useRef(null);
+    const photosInputRef = useRef(null);
+    const [fileName, setFileName] = useState('');
+    const [propertyName, setPropertyName] = useState('');
+    const [rows, setRows] = useState([]);
+    const [parseErrors, setParseErrors] = useState([]);
+    const [importing, setImporting] = useState(false);
+    const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+    const [results, setResults] = useState(null);
+    const [photoMap, setPhotoMap] = useState({});
+
+    const handleDownloadTemplate = async () => {
+        try {
+            setDownloadingTemplate(true);
+            const damrUser = await getItem('DAMR_USER');
+            const res = await axios.get(`${backend_url}${importReadingsTemplateURL}`, {
+                responseType: 'blob',
+                headers: { Authorization: `Bearer ${damrUser?.token}` },
+            });
+            const url = URL.createObjectURL(new Blob([res.data]));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'reading_import_template.xlsx';
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            let msg = err.message;
+            if (err.response?.data instanceof Blob) {
+                try {
+                    const text = await err.response.data.text();
+                    msg = JSON.parse(text).error || msg;
+                } catch {
+                }
+            }
+            toastify(`Could not download template: ${msg}`, 'error');
+        } finally {
+            setDownloadingTemplate(false);
+        }
+    };
+    const handlePhotosChange = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        const newMap = { ...photoMap };
+        let matchedCount = 0;
+        const unmatchedNames = [];
+
+        files.forEach((file) => {
+            const base = file.name.replace(/\.[^.]+$/, '').toLowerCase();
+            const idx = rows.findIndex((r) => {
+                const serial = String(r.meterSerial || '').trim().toLowerCase();
+                return serial && base.includes(serial);
+            });
+            if (idx !== -1) {
+                newMap[idx] = file;
+                matchedCount++;
+            } else {
+                unmatchedNames.push(file.name);
+            }
+        });
+
+        setPhotoMap(newMap);
+        if (matchedCount > 0) {
+            toastify(
+                `Matched ${matchedCount} photo(s) to rows by serial number in the filename` +
+                    (unmatchedNames.length > 0 ? `; ${unmatchedNames.length} file(s) didn't match any row` : ''),
+                unmatchedNames.length > 0 ? 'warn' : 'success',
+            );
+        } else {
+            toastify(
+                "No photos matched — make sure each filename contains that row's meter serial number",
+                'error',
+            );
+        }
+        if (photosInputRef.current) photosInputRef.current.value = '';
+    };
+
+    const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setFileName(file.name);
+        setResults(null);
+        setPhotoMap({}); 
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+
+                const isOwnTemplate =
+                    workbook.SheetNames.includes('Property') &&
+                    workbook.SheetNames.includes('Readings');
+
+                let property = '';
+                let dataSheetName = workbook.SheetNames[0];
+                if (isOwnTemplate) {
+                    const propertyCell = workbook.Sheets['Property']['A2'];
+                    property = propertyCell ? String(propertyCell.v || '').trim() : '';
+                    dataSheetName = 'Readings';
+                }
+
+                const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[dataSheetName], {
+                    defval: '',
+                    raw: false,
+                });
+
+                const normalized = rawRows.map(normalizeReadingImportRow).filter((r) => !isBlankReadingRow(r));
+                const errors = [];
+                normalized.forEach((row, i) => {
+                    if (!row.meterSerial) {
+                        errors.push(`Row ${i + 1}: missing meter serial number`);
+                    } else if (!row.value) {
+                        errors.push(`Row ${i + 1}: missing reading value`);
+                    }
+                });
+
+                setPropertyName(property);
+                setRows(normalized);
+                setParseErrors(errors);
+
+                if (normalized.length === 0) {
+                    toastify('No rows found in file', 'warn');
+                } else {
+                    toastify(
+                        `Parsed ${normalized.length} row(s)${property ? ` for ${property}` : ''} — review below and click Import`,
+                        'info',
+                    );
+                }
+            } catch (err) {
+                toastify(`Could not read file: ${err.message}`, 'error');
+                setRows([]);
+                setParseErrors([]);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    const handleImport = async () => {
+        if (rows.length === 0) {
+            toastify('Choose a file to import first', 'error');
+            return;
+        }
+        try {
+            setImporting(true);
+            setResults(null);
+            const formData = new FormData();
+            formData.append('readings', JSON.stringify(rows));
+            Object.entries(photoMap).forEach(([index, file]) => {
+                formData.append(`photo_${index}`, file);
+            });
+
+            const res = await makeAuthRequest(importReadingsURL, 'POST', formData);
+            if (res.success) {
+                const summary = res.data;
+                setResults(summary);
+                toastify(
+                    `Import complete — ${summary.created} created, ${summary.skipped} skipped, ${summary.errors} errors` +
+                        (summary.pending ? `, ${summary.pending} held pending (serial number mismatch)` : '') +
+                        (summary.flagged ? `, ${summary.flagged} flagged for review` : '') +
+                        (summary.withPhoto ? `, ${summary.withPhoto} with a photo cross-checked` : ''),
+                    summary.errors > 0 || summary.pending > 0 ? 'warn' : 'success',
+                );
+                if (onSuccess) onSuccess();
+            } else {
+                toastify(res.error, 'error');
+            }
+        } catch (err) {
+            toastify(err.message, 'error');
+        } finally {
+            setImporting(false);
+        }
+    };
+
+    const handleClear = () => {
+        setPhotoMap({});
+        setFileName('');
+        setPropertyName('');
+        setRows([]);
+        setParseErrors([]);
+        setResults(null);
+        if (csvInputRef.current) csvInputRef.current.value = '';
+        if (excelInputRef.current) excelInputRef.current.value = '';
+        if (photosInputRef.current) photosInputRef.current.value = '';
+    };
+
+    const resultBadge = (status) =>
+        ({
+            created: 'bg-success',
+            skipped: 'bg-warning',
+            error: 'bg-danger',
+        })[status] || 'bg-secondary';
+
+    return (
+        <div className="card-body">
+            <div className="d-flex justify-content-end align-items-start mb-2">
+                <div className="btn-group" role="group" aria-label="Import readings">
+                    <button
+                        type="button"
+                        className="btn btn-primary text-white"
+                        style={{ borderRadius: 0 }}
+                        onClick={() => csvInputRef.current?.click()}
+                    >
+                        <i className="ti ti-file-type-csv me-1"></i> CSV
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-success text-white"
+                        style={{ borderRadius: 0 }}
+                        onClick={() => excelInputRef.current?.click()}
+                    >
+                        <i className="ti ti-file-spreadsheet me-1"></i> Excel
+                    </button>
+                    <button
+                        type="button"
+                        className="btn text-white"
+                        style={{ borderRadius: 0, backgroundColor: '#fd7e14' }}
+                        disabled={downloadingTemplate}
+                        onClick={handleDownloadTemplate}
+                    >
+                        <i className="ti ti-download me-1"></i>
+                        {downloadingTemplate ? 'Preparing...' : 'Download Template'}
+                    </button>
+                </div>
+                <input
+                    ref={csvInputRef}
+                    type="file"
+                    className="d-none"
+                    accept=".csv"
+                    onChange={handleFileChange}
+                />
+                <input
+                    ref={excelInputRef}
+                    type="file"
+                    className="d-none"
+                    accept=".xlsx,.xls,.xlsm"
+                    onChange={handleFileChange}
+                />
+            </div>
+            <div className="mb-4 text-end">
+                <small className="text-muted">
+                    Columns: meterSerial (required — must match an already-assigned
+                    meter), value (required), readingDate (optional — defaults to
+                    today), notes (optional).
+                    {fileName && <> Selected: <strong>{fileName}</strong></>}
+                    {propertyName && <> · Property: <strong>{propertyName}</strong></>}
+                </small>
+            </div>
+
+            {parseErrors.length > 0 && (
+                <div className="alert alert-warning py-2">
+                    <strong>{parseErrors.length} row(s) will be skipped:</strong>
+                    <ul className="mb-0">
+                        {parseErrors.slice(0, 5).map((e, i) => (
+                            <li key={i}>{e}</li>
+                        ))}
+                        {parseErrors.length > 5 && <li>...and {parseErrors.length - 5} more</li>}
+                    </ul>
+                </div>
+            )}
+
+            {rows.length > 0 && !results && (
+                <>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                        <small className="text-muted">
+                            Optional: attach meter photos for an OCR cross-check against the
+                            keyed value — name each file with that row's meter serial number
+                            (e.g. <code>SN1023.jpg</code>) and they'll be matched automatically.
+                        </small>
+                        <button
+                            type="button"
+                            className="btn btn-outline-secondary btn-sm text-nowrap ms-2"
+                            onClick={() => photosInputRef.current?.click()}
+                        >
+                            <i className="ti ti-camera me-1"></i>
+                            Attach Photos
+                            {Object.keys(photoMap).length > 0 && ` (${Object.keys(photoMap).length} matched)`}
+                        </button>
+                        <input
+                            ref={photosInputRef}
+                            type="file"
+                            className="d-none"
+                            accept="image/jpeg,image/png,image/webp"
+                            multiple
+                            onChange={handlePhotosChange}
+                        />
+                    </div>
+
+                    <div className="table-responsive mb-3" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                        <table className="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Meter Serial</th>
+                                    <th>Value</th>
+                                    <th>Reading Date</th>
+                                    <th>Notes</th>
+                                    <th>Photo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r, i) => (
+                                    <tr key={i} className={!r.meterSerial || !r.value ? 'table-danger' : ''}>
+                                        <td>{i + 1}</td>
+                                        <td>{r.meterSerial || <span className="text-danger">missing</span>}</td>
+                                        <td>{r.value || <span className="text-danger">missing</span>}</td>
+                                        <td>{r.readingDate || 'today'}</td>
+                                        <td>{r.notes || '—'}</td>
+                                        <td>
+                                            {photoMap[i] ? (
+                                                <span className="badge bg-success" title={photoMap[i].name}>
+                                                    <i className="ti ti-check me-1"></i>attached
+                                                </span>
+                                            ) : (
+                                                '—'
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="text-end">
+                        <button className="btn btn-secondary me-2" onClick={handleClear}>
+                            Clear
+                        </button>
+                        <button className="btn btn-primary" disabled={importing} onClick={handleImport}>
+                            {importing ? (
+                                'Importing...'
+                            ) : (
+                                <>
+                                    <i className="ti ti-upload me-2"></i>
+                                    Import {rows.length} Reading{rows.length === 1 ? '' : 's'}
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </>
+            )}
+
+            {results && (
+                <div>
+                    <div className="row mb-3">
+                        <div className="col">
+                            <div className="alert alert-success mb-0 text-center">
+                                <div className="fs-4 fw-bold">{results.created}</div>
+                                Created
+                            </div>
+                        </div>
+                        <div className="col">
+                            <div className="alert alert-primary mb-0 text-center">
+                                <div className="fs-4 fw-bold">{results.pending || 0}</div>
+                                Pending Verification
+                            </div>
+                        </div>
+                        <div className="col">
+                            <div className="alert alert-info mb-0 text-center">
+                                <div className="fs-4 fw-bold">{results.flagged || 0}</div>
+                                Flagged for Review
+                            </div>
+                        </div>
+                        <div className="col">
+                            <div className="alert alert-warning mb-0 text-center">
+                                <div className="fs-4 fw-bold">{results.skipped}</div>
+                                Skipped
+                            </div>
+                        </div>
+                        <div className="col">
+                            <div className="alert alert-danger mb-0 text-center">
+                                <div className="fs-4 fw-bold">{results.errors}</div>
+                                Errors
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="table-responsive mb-3" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                        <table className="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Row</th>
+                                    <th>Meter Serial</th>
+                                    <th>Status</th>
+                                    <th>Message</th>
+                                    <th>Photo</th>
+                                    <th>Flag</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {results.results.map((r) => (
+                                    <tr key={r.row}>
+                                        <td>{r.row}</td>
+                                        <td>{r.serialNumber || '—'}</td>
+                                        <td>
+                                            {r.pending ? (
+                                                <span className="badge bg-primary" title="Awaiting a matching photo/serial number before it's confirmed">
+                                                    pending
+                                                </span>
+                                            ) : (
+                                                <span className={`badge ${resultBadge(r.status)}`}>{r.status}</span>
+                                            )}
+                                        </td>
+                                        <td>
+                                            {r.message ||
+                                                (r.pending
+                                                    ? r.flag === 'serial_mismatch'
+                                                        ? "Recorded, held pending — photo's serial number didn't match"
+                                                        : "Recorded, held pending — couldn't read a serial number off the photo"
+                                                    : r.status === 'created'
+                                                        ? 'Reading recorded'
+                                                        : '')}
+                                        </td>
+                                        <td>
+                                            {r.photo ? (
+                                                <i
+                                                    className="ti ti-camera text-primary"
+                                                    title={r.ocrChecked ? 'Photo attached — OCR cross-checked' : 'Photo attached'}
+                                                ></i>
+                                            ) : (
+                                                '—'
+                                            )}
+                                        </td>
+                                        <td>
+                                            {r.flag ? (
+                                                <span className="badge bg-danger" title="Anomaly flag raised">
+                                                    {r.flag.replace(/_/g, ' ')}
+                                                </span>
+                                            ) : r.duplicate ? (
+                                                <span className="badge bg-secondary" title="Another reading exists for this meter the same day">
+                                                    duplicate
+                                                </span>
+                                            ) : (
+                                                '—'
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="text-end">
+                        <button className="btn btn-secondary" onClick={handleClear}>
+                            <i className="ti ti-refresh me-1"></i> Import Another File
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {rows.length === 0 && !results && (
+                <div
+                    className="card border-dashed text-center p-4"
+                    style={{ border: '2px dashed #dee2e6' }}
+                >
+                    <i className="ti ti-file-upload text-muted" style={{ fontSize: '48px' }}></i>
+                    <p className="text-muted mt-2 mb-0">
+                        Click CSV or Excel above to choose a file and preview readings before importing
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+}
 function Readings() {
     const location = useLocation();
     const userRole = useSelector((state) => state.damrReducer.user?.role);
     const [activeTab, setActiveTab] = useState(location.state?.activeTab || (userRole === 'Staff' ? 'mine' : 'all'));
 
     const tabs = [
-        { key: 'all',  label: 'All Readings', icon: 'ti ti-list',        roles: ['admin', 'editor'] },
-        { key: 'mine', label: 'My Readings',  icon: 'ti ti-user-check',  roles: ['admin', 'editor', 'Staff'] },
+        { key: 'all',    label: 'All Readings',    icon: 'ti ti-list',         roles: ['admin', 'editor'] },
+        { key: 'mine',   label: 'My Readings',     icon: 'ti ti-user-check',   roles: ['admin', 'editor', 'Staff'] },
+        { key: 'import', label: 'Import Readings', icon: 'ti ti-file-import', roles: ['admin', 'editor', 'Staff'] },
     ];
 
     const visibleTabs = tabs.filter((t) => t.roles.includes(userRole));
@@ -398,8 +882,9 @@ function Readings() {
                             </ul>
                         </div>
 
-                        {activeTab === 'all'  && <AllReadingsTab />}
-                        {activeTab === 'mine' && <MyReadingsTab />}
+                        {activeTab === 'all'    && <AllReadingsTab />}
+                        {activeTab === 'mine'   && <MyReadingsTab />}
+                        {activeTab === 'import' && <ImportReadingsTab onSuccess={() => {}} />}
                     </div>
                 </div>
             </div>

@@ -61,6 +61,8 @@ const TYPE_COLORS = {
   ocr_mismatch: { bg: "#fff4de", color: "#b7791f" },
   missing_reading: { bg: "#eef0f3", color: "#5c6470" },
   manual_review: { bg: "#e7f1ff", color: "#3b5bdb" },
+  serial_mismatch: { bg: "#fdeaea", color: "#c0392b" },
+  serial_unverified: { bg: "#fff4de", color: "#b7791f" },
 };
 
 const TypeBadge = ({ type }) => {
@@ -242,6 +244,8 @@ function AllFlagsTab() {
             <option value="CRITICAL">Critical</option>
             <option value="high_consumption">High Consumption</option>
             <option value="ocr_mismatch">OCR Mismatch</option>
+            <option value="serial_mismatch">Serial Mismatch</option>
+            <option value="serial_unverified">Serial Unverified</option>
             <option value="missing_reading">Missing Reading</option>
             <option value="manual_review">Manual Review</option>
           </select>

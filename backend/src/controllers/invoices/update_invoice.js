@@ -17,21 +17,10 @@ const BREAKDOWN_FIELDS = [
   "penalty",
   "creditsApplied",
 ];
-
-/**
- * PUT /invoices/:id
- *
- * Manual invoice edit — due date, status, an internal note, and (with a
- * mandatory reason, for audit purposes) the charge breakdown / total
- * amount. Every change is appended to `editHistory` rather than silently
- * overwritten, so "why does this invoice say KES 4,000 instead of what the
- * tariff engine computed" always has an answer later.
- */
 const updateInvoice = async (req, res) => {
   try {
     const { id } = req.params;
-    const { dueDate, status, notes, breakdown, totalAmount, reason } =
-      req.body;
+    const { dueDate, status, notes, breakdown, totalAmount, reason } = req.body;
 
     const Invoice = getInvoiceModel();
     const invoice = await Invoice.findById(id);
@@ -116,9 +105,6 @@ const updateInvoice = async (req, res) => {
         invoice.totalAmount = val;
       }
     }
-
-    // Keep balance consistent whenever the total changed — unless status
-    // was just manually forced to Paid/Void above, which already set it.
     if (!["Paid", "Void"].includes(invoice.status)) {
       invoice.balance = Math.max(
         invoice.totalAmount - (invoice.amountPaid || 0),

@@ -6,12 +6,6 @@ import { toastify } from "../../../../../utils/toast";
 
 const USERS_URL = "/api/v1/damr/users";
 
-// Standalone page (opened in its own browser tab from the All Users list)
-// for an admin to set a brand-new password for a user. Write-only by
-// design — the stored password is a one-way bcrypt hash (see
-// backend/src/controllers/auth/register.js) and can never be displayed,
-// so this is the only supported way to "recover" a lost password: reset
-// it here and share the new one with the user directly.
 function ResetUserPassword() {
   const { id } = useParams();
   const navigate = useNavigate();

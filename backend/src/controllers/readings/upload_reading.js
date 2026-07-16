@@ -1,8 +1,9 @@
 const {
   getMeter: getMeterModel,
   getReading: getReadingModel,
+  getFlag: getFlagModel,
 } = require("../../utils/damrSchemas");
-const { runOCRPipeline } = require("../../services/ocrService");
+const { runOCRPipeline, verifySerial } = require("../../services/ocrService");
 const {
   detectAnomalies,
   checkDuplicateSubmission,
@@ -38,6 +39,13 @@ const uploadReading = async (req, res) => {
     const consumption =
       ocr.value !== null ? Math.max(0, readingValue - previousValue) : null;
 
+    // Same serial cross-check as manual_reading.js/bulk_create_readings.js
+    // — this endpoint always has a photo (required above), so this always
+    // runs. Both "mismatch" and "unverified" hold the reading pending even
+    // if the register-reading OCR itself was otherwise high-confidence.
+    const serialStatus = verifySerial(ocr, meter.serialNumber);
+    const serialNeedsReview = serialStatus === "mismatch" || serialStatus === "unverified";
+
     const reading = await Reading.create({
       meterId,
       unitId: meter.unitId || null,
@@ -50,7 +58,7 @@ const uploadReading = async (req, res) => {
       imageUrl: `/uploads/${req.file.filename}`,
       ocrRawValue: ocr.rawText || null,
       ocrConfidence: ocr.confidence || null,
-      status: ocr.meetsThreshold ? "confirmed" : "pending",
+      status: ocr.meetsThreshold && !serialNeedsReview ? "confirmed" : "pending",
       submittedBy: req.user._id,
       notes: notes || "",
     });
@@ -63,10 +71,30 @@ const uploadReading = async (req, res) => {
     if (flag) {
       await reading.updateOne({ flagId: flag._id });
     }
+    let serialFlag = null;
+    if (serialStatus === "mismatch" || serialStatus === "unverified") {
+      const Flag = getFlagModel();
+      serialFlag = await Flag.create({
+        type: serialStatus === "mismatch" ? "serial_mismatch" : "serial_unverified",
+        meterId,
+        readingId: reading._id,
+        facilityId: meter.facilityId || null,
+        status: "open",
+        description:
+          serialStatus === "mismatch"
+            ? `Attached photo's visible serial number ("${ocr.serialNumber}") doesn't match this meter's registered serial number ("${meter.serialNumber}") — reading held as pending until verified.`
+            : `Could not confidently read a serial number from the attached photo — reading held as pending until someone verifies it's for meter ${meter.serialNumber}.`,
+      });
+      await Meter.findByIdAndUpdate(meterId, { $inc: { openFlagCount: 1 } });
+    }
     const duplicateFlag = await checkDuplicateSubmission(reading);
 
     return res.status(200).send({
-      message: "Reading submitted successfully",
+      message: serialNeedsReview
+        ? serialStatus === "mismatch"
+          ? "Reading recorded but held as pending — the attached photo's serial number doesn't match this meter."
+          : "Reading recorded but held as pending — could not confirm the meter's serial number from the attached photo."
+        : "Reading submitted successfully",
       reading,
       ocr: {
         confidence: ocr.confidence,
@@ -75,8 +103,11 @@ const uploadReading = async (req, res) => {
         meterType: ocr.meterType,
         usedFallback: ocr.usedFallback,
         error: ocr.error || null,
+        serialNumber: ocr.serialNumber || null,
+        serialStatus,
       },
       flag: flag || null,
+      serialFlag: serialFlag || null,
       duplicateFlag: duplicateFlag || null,
     });
   } catch (err) {

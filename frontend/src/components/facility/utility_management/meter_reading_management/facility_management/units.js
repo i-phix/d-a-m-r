@@ -109,8 +109,6 @@ const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
   );
 };
 
-// Generic comparator driving every sortable column on the All Units table.
-// "index" sorts by the order units were fetched in.
 function sortUnits(list, field, dir) {
   if (field === "index") {
     return dir === "asc" ? list : [...list].reverse();

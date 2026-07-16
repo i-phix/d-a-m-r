@@ -4,9 +4,14 @@ const {
   getReading: getReadingModel,
   getMeter: getMeterModel,
 } = require("../../utils/damrSchemas");
-const { calcInvoice, applyCreditsToInvoice } = require("../../services/billingService");
+const {
+  calcInvoice,
+  applyCreditsToInvoice,
+} = require("../../services/billingService");
 const { getBlockingFlag } = require("../../services/anomalyService");
-const { sendInvoiceCreatedNotification } = require("../../services/invoiceNotificationService");
+const {
+  sendInvoiceCreatedNotification,
+} = require("../../services/invoiceNotificationService");
 
 function endOfDay(dateStr) {
   const d = new Date(dateStr);
@@ -26,11 +31,6 @@ const bulkGenerate = async (req, res) => {
     const Invoice = getInvoiceModel();
     const Reading = getReadingModel();
     const Meter = getMeterModel();
-    // Unit doesn't carry meterId/activeResident fields (they don't exist on
-    // payservedb's Unit schema — writes to them are silently dropped by
-    // Mongoose's default strict mode). Meters point back at units via
-    // Meter.unitId, and the occupant is Unit.residentId — same fix already
-    // applied to monthlyInvoices.js and how generate_invoice.js works.
     const units = await db.Unit.find({
       facilityId,
       status: "OCCUPIED",
@@ -131,8 +131,6 @@ const bulkGenerate = async (req, res) => {
           unitType: unit.unitType,
         });
 
-        // Roadmap Phase 8, #1 — same hold-on-unresolved-high-severity-flag
-        // gate as the other two invoice-creation paths.
         const blockingFlag = await getBlockingFlag(lastReadingDoc._id);
 
         const invoice = await Invoice.create({
@@ -149,7 +147,9 @@ const bulkGenerate = async (req, res) => {
           amountPaid: 0,
           balance: totalAmount,
           status: blockingFlag ? "Held" : "Unpaid",
-          heldReason: blockingFlag ? `${blockingFlag.type}: flag ${blockingFlag._id}` : null,
+          heldReason: blockingFlag
+            ? `${blockingFlag.type}: flag ${blockingFlag._id}`
+            : null,
           generatedBy: req.user._id,
           dueDate,
           tariffPlanId,
@@ -169,7 +169,9 @@ const bulkGenerate = async (req, res) => {
             `[bulkGenerate] Invoice ${invoice._id} held for review — unresolved ${blockingFlag.type} flag on the billed reading`,
           );
         } else {
-          await sendInvoiceCreatedNotification(invoice, { logPrefix: "[bulkGenerate] " });
+          await sendInvoiceCreatedNotification(invoice, {
+            logPrefix: "[bulkGenerate] ",
+          });
         }
 
         results.push({

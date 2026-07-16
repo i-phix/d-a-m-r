@@ -9,7 +9,9 @@ const {
   applyCreditsToInvoice,
 } = require("../../services/billingService");
 const { getBlockingFlag } = require("../../services/anomalyService");
-const { sendInvoiceCreatedNotification } = require("../../services/invoiceNotificationService");
+const {
+  sendInvoiceCreatedNotification,
+} = require("../../services/invoiceNotificationService");
 
 async function monthlyInvoices() {
   console.log(
@@ -118,14 +120,6 @@ async function monthlyInvoices() {
           unitId: unit._id,
           unitType: unit.unitType,
         });
-
-        // Roadmap Phase 8, #1 — hold billing on an unresolved high-severity
-        // flag (SPIKE/OVERNIGHT_LEAK/CRITICAL) instead of sending a bill
-        // that might be based on a bad reading. The invoice is still
-        // created (amount already calculated, nothing to redo later) —
-        // just with status "Held" and no resident notification, until a
-        // staff member resolves the flag (see resolve_flag.js, which sends
-        // this same notification for the first time on release).
         const blockingFlag = await getBlockingFlag(lastReadingDoc._id);
 
         const invoice = await Invoice.create({
@@ -142,7 +136,9 @@ async function monthlyInvoices() {
           amountPaid: 0,
           balance: totalAmount,
           status: blockingFlag ? "Held" : "Unpaid",
-          heldReason: blockingFlag ? `${blockingFlag.type}: flag ${blockingFlag._id}` : null,
+          heldReason: blockingFlag
+            ? `${blockingFlag.type}: flag ${blockingFlag._id}`
+            : null,
           dueDate,
           tariffPlanId,
           breakdown,
@@ -163,7 +159,9 @@ async function monthlyInvoices() {
           );
         } else {
           stats.generated++;
-          await sendInvoiceCreatedNotification(invoice, { logPrefix: "[CRON] " });
+          await sendInvoiceCreatedNotification(invoice, {
+            logPrefix: "[CRON] ",
+          });
         }
       } catch (err) {
         console.error(`[CRON] Error for unit ${unit._id}:`, err.message);

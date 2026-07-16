@@ -7,9 +7,6 @@ import AddressAutocompleteInput from "../../../../common/AddressAutocompleteInpu
 
 const LOCATIONS_URL = "/api/v1/damr/facility/locations";
 
-// One shared <style> block for every soft-styled table/search input on this
-// page — a soft blue header, faint zebra striping, and a pill-shaped search
-// box, instead of the default harsher Bootstrap table/input look.
 const SoftTableStyles = () => (
   <style>{`
         .dmr-soft-table thead th {
@@ -42,10 +39,6 @@ const SoftTableStyles = () => (
         }
     `}</style>
 );
-
-// Clickable column header — click once to sort ascending on that field,
-// click again to flip to descending, click a different header to switch
-// fields (always starting ascending on the new one).
 const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
   const active = sortField === field;
   const [hover, setHover] = useState(false);
@@ -83,8 +76,6 @@ const SortableHeader = ({ label, field, sortField, sortDir, onSort }) => {
   );
 };
 
-// Generic comparator driving every sortable column on the All Locations
-// table. "index" sorts by the order locations were fetched in.
 function sortLocations(list, field, dir) {
   if (field === "index") {
     return dir === "asc" ? list : [...list].reverse();
@@ -206,18 +197,52 @@ function AllLocationsTab({ onEdit }) {
           <table className="table table-hover dmr-soft-table">
             <thead>
               <tr>
-                <SortableHeader label="#" field="index" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="Name" field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="County" field="county" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="Town" field="town" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortableHeader label="Address" field="address" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader
+                  label="#"
+                  field="index"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Name"
+                  field="name"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="County"
+                  field="county"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Town"
+                  field="town"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Address"
+                  field="address"
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((l, i) => (
                 <tr key={l._id}>
-                  <td>{sortField === "index" && sortDir === "desc" ? sorted.length - i : i + 1}</td>
+                  <td>
+                    {sortField === "index" && sortDir === "desc"
+                      ? sorted.length - i
+                      : i + 1}
+                  </td>
                   <td>
                     <strong>{l.name}</strong>
                   </td>
@@ -337,7 +362,8 @@ function LocationFormTab({ editing, onSuccess, onCancelEdit }) {
               }
             />
             <div className="form-text">
-              Start typing to see suggestions — picking one also fills in County/Town below.
+              Start typing to see suggestions — picking one also fills in
+              County/Town below.
             </div>
           </div>
           <div className="row">

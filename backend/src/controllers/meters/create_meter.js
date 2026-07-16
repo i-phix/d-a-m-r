@@ -19,11 +19,9 @@ const createMeter = async (req, res) => {
 
     const existing = await Meter.findOne({ serialNumber: serialNumber.trim() });
     if (existing) {
-      return res
-        .status(400)
-        .send({
-          error: `Meter with serial number "${serialNumber}" already exists`,
-        });
+      return res.status(400).send({
+        error: `Meter with serial number "${serialNumber}" already exists`,
+      });
     }
 
     const resolvedInitialReading = initialReading || 0;
@@ -39,14 +37,6 @@ const createMeter = async (req, res) => {
       installationDate: resolvedInstallationDate,
       initialReading: resolvedInitialReading,
       condition,
-      // The reading taken at installation IS the meter's first reading —
-      // it shouldn't show as a blank/dashed "Last Reading" on the meter
-      // page until someone happens to submit a reading later. Denormalized
-      // onto the Meter doc only (same fields upload/manual readings keep
-      // in sync) — no Reading document is created here, since
-      // upload_reading.js/manual_reading.js already fall back to
-      // meter.initialReading as "previousValue" when no Reading exists yet,
-      // so consumption math is unaffected either way.
       lastReadingValue: resolvedInitialReading,
       lastReadingDate: resolvedInstallationDate,
       lastReadingBy: req.user._id,

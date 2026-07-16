@@ -9,12 +9,6 @@ import {
   getReadingsURL,
   getFlagsURL,
 } from "../../../../../utils/urls";
-
-// Note: the nav section this used to live under was renamed "Hierarchy" →
-// "Facilities", and the backend route is registered at /facility/units
-// (see backend/src/routes/index.js) — this was previously pointed at the
-// stale /hierarchy/units path, which 404'd and silently left the assign
-// dropdown empty regardless of what units actually existed.
 const UNITS_URL = "/api/v1/damr/facility/units";
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -37,18 +31,10 @@ const InfoRow = ({ label, value }) => (
     </div>
   </div>
 );
-
-// ══════════════════════════════════════════════════════════════════════
-// TAB: Meter Info
-// ══════════════════════════════════════════════════════════════════════
 function MeterInfoTab({ meter, onRefresh, userRole }) {
   const [assignUnitId, setAssignUnitId] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [availableUnits, setAvailableUnits] = useState([]);
-
-  // Fetch units with no meter yet — a unit can be VACANT or already
-  // OCCUPIED (meters can be assigned to occupied units too; the backend
-  // binds to the existing resident automatically in that case).
   useEffect(() => {
     if (userRole !== "Staff" && meter.status === "UNASSIGNED") {
       makeAuthRequest(`${UNITS_URL}?noMeter=true`, "GET").then((res) => {
@@ -203,14 +189,14 @@ function MeterInfoTab({ meter, onRefresh, userRole }) {
                 </select>
                 {availableUnits.length === 0 && (
                   <small className="text-warning">
-                    No units without a meter found. Add units under
-                    Facilities &gt; Units first.
+                    No units without a meter found. Add units under Facilities
+                    &gt; Units first.
                   </small>
                 )}
                 <small className="text-muted d-block mt-1">
                   Units without a meter yet are listed — both vacant and
-                  already-occupied units can be assigned. If occupied, the
-                  meter binds to the current resident automatically.
+                  already-occupied units can be assigned. If occupied, the meter
+                  binds to the current resident automatically.
                 </small>
               </div>
               <button
@@ -227,10 +213,6 @@ function MeterInfoTab({ meter, onRefresh, userRole }) {
     </div>
   );
 }
-
-// ══════════════════════════════════════════════════════════════════════
-// TAB: Reading History
-// ══════════════════════════════════════════════════════════════════════
 function ReadingHistoryTab({ meterId }) {
   const [readings, setReadings] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -307,10 +289,6 @@ function ReadingHistoryTab({ meterId }) {
     </div>
   );
 }
-
-// ══════════════════════════════════════════════════════════════════════
-// TAB: Flags
-// ══════════════════════════════════════════════════════════════════════
 function FlagsTab({ meterId }) {
   const [flags, setFlags] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -397,10 +375,6 @@ function FlagsTab({ meterId }) {
     </div>
   );
 }
-
-// ══════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ══════════════════════════════════════════════════════════════════════
 function ViewMeter() {
   const { id } = useParams();
   const navigate = useNavigate();

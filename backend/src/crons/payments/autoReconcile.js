@@ -25,11 +25,6 @@ async function autoReconcile() {
     })
       .select("_id residentId")
       .lean();
-
-    // Distinct residents only — reconcileResidentInvoices already walks
-    // that resident's full set of open invoices in the right order, so
-    // there's no need (and no safety, per the account-level receipt ledger)
-    // in calling it once per invoice.
     const residentIds = [
       ...new Set(openInvoices.map((inv) => String(inv.residentId))),
     ];

@@ -4,20 +4,6 @@ const {
   getUnitMeta: getUnitMetaModel,
 } = require("../utils/damrSchemas");
 
-// ─────────────────────────────────────────────────────────────────────────
-// Shared billing engine. Replaces the three copy-pasted `calcInvoice()`
-// implementations that used to live in generate_invoice.js, bulk_generate.js
-// and monthlyInvoices.js (all `consumption * flatWaterRate`, no bands, no
-// minimum charge, no credits, no penalties). Every invoice-producing code
-// path should go through `calcInvoice()` here so billing logic only exists
-// in one place.
-// ─────────────────────────────────────────────────────────────────────────
-
-// Fallback plan used when a facility has no TariffPlan configured yet —
-// mirrors the old hardcoded behavior (flat 80/m³, 75% sewerage, KES 150
-// tech fee, no minimum, no penalty, due 15 days after period end) so
-// existing facilities keep billing exactly as before until an admin
-// configures a real tiered plan for them.
 const DEFAULT_PLAN = {
   _id: null,
   name: "Default (unconfigured)",
@@ -31,15 +17,6 @@ const DEFAULT_PLAN = {
   dueDateOffsetDays: 15,
 };
 
-/**
- * Roadmap Phase 8, #20 — a facility can have more than one active plan now:
- * a facility-wide default, plus optional narrower per-block or per-category
- * (unitType) plans. Resolves most-specific-first: unitType match, then
- * block match, then the facility default, then the hardcoded fallback.
- * `blockId`/`unitType` are optional — omitting both preserves the old
- * behavior exactly (existing callers that don't pass them still resolve
- * the plain facility default plan).
- */
 async function getActiveTariffPlan(facilityId, { blockId, unitType } = {}) {
   if (!facilityId) return DEFAULT_PLAN;
   const TariffPlan = getTariffPlanModel();
@@ -59,13 +36,6 @@ async function getActiveTariffPlan(facilityId, { blockId, unitType } = {}) {
   }
   return DEFAULT_PLAN;
 }
-
-/**
- * Band-by-band tiered charge calculation.
- * Bands must be ordered ascending by `upTo`, with the last band's `upTo`
- * being `null` (unbounded). e.g. [{upTo:6, rate:180}, {upTo:null, rate:205}]
- * means the first 6m³ cost 180/m³ and every m³ above that costs 205/m³.
- */
 function calcTieredCharge(consumption, bands) {
   let remaining = Math.max(0, Number(consumption) || 0);
   let charge = 0;
@@ -121,12 +91,6 @@ async function previewCredits(residentId) {
   const total = credits.reduce((sum, c) => sum + c.remainingAmount, 0);
   return { total, credits };
 }
-
-/**
- * Actually consumes open credits against a just-created invoice — call this
- * AFTER Invoice.create() so `appliedToInvoiceIds` has a real id to record.
- * Applies oldest-first, up to `amountToApply`.
- */
 async function applyCreditsToInvoice(residentId, invoiceId, amountToApply) {
   if (!residentId || !amountToApply || amountToApply <= 0) return 0;
   const Credit = getCreditModel();
@@ -159,13 +123,7 @@ function getDueDate(periodEnd, dueDateOffsetDays = 15) {
  * Full invoice calculation for one billing period.
  * @returns {{ ratePerUnit, totalAmount, dueDate, tariffPlanId, breakdown }}
  */
-/**
- * unitId is a convenience for callers — they already have the unit doc in
- * hand and its blockId isn't a real payservedb field (see
- * controllers/facility/units.js for why), so this resolves it via DAMR's
- * own UnitMeta join rather than every invoice-creation call site having to
- * do that lookup itself. Pass `blockId` directly instead if already known.
- */
+
 async function resolveBlockId(unitId) {
   if (!unitId) return null;
   const UnitMeta = getUnitMetaModel();
@@ -185,7 +143,10 @@ async function calcInvoice({
   unitType,
 }) {
   const resolvedBlockId = blockId || (await resolveBlockId(unitId));
-  const plan = await getActiveTariffPlan(facilityId, { blockId: resolvedBlockId, unitType });
+  const plan = await getActiveTariffPlan(facilityId, {
+    blockId: resolvedBlockId,
+    unitType,
+  });
 
   const { charge: rawWaterCharge, lines } = calcTieredCharge(
     consumption,
@@ -237,13 +198,6 @@ async function calcInvoice({
   };
 }
 
-/**
- * Applies a facility's configured penalty to an already-overdue invoice.
- * Idempotent via `penaltyApplied` — safe to call repeatedly (e.g. once per
- * day from the reminder cron) without double-charging.
- * Returns `{ penalty, update }` where `update` is the exact object to pass
- * to `Invoice.findByIdAndUpdate()`, or `null` if no penalty was applied.
- */
 async function calcLateFee(invoice) {
   if (invoice.penaltyApplied) return null;
 

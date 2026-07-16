@@ -1,17 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { loadGooglePlacesLibrary } from "../../utils/loadGoogleMaps";
-
-// Free-text input with Google Places (New) autocomplete suggestions,
-// styled as a plain Bootstrap form-control + dropdown so it matches every
-// other input in this app, rather than Google's shadow-DOM
-// PlaceAutocompleteElement widget (which is hard to restyle to fit).
-//
-// - onChange(e) fires with a {target:{name,value}} shape, same as a plain
-//   <input>, so it drops into the existing handleChange(e) pattern used
-//   across facilities.js/locations.js unchanged.
-// - onPlaceSelected(details) is optional and fires only when a suggestion
-//   is actually picked, with the formatted address plus parsed
-//   county/town, so callers can auto-fill sibling fields.
 function AddressAutocompleteInput({
   name,
   value,
@@ -68,14 +56,12 @@ function AddressAutocompleteInput({
       if (countryCodes?.length) request.includedRegionCodes = countryCodes;
 
       const { suggestions: results } =
-        await places.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+        await places.AutocompleteSuggestion.fetchAutocompleteSuggestions(
+          request,
+        );
       setSuggestions(results || []);
       setOpen(true);
     } catch (err) {
-      // Non-fatal — the field still works as a plain text input either way —
-      // but log it so a real cause (bad API key restrictions, API not
-      // enabled, etc.) is visible in the browser console instead of just
-      // silently showing no suggestions.
       console.error("Places Autocomplete request failed:", err);
       setLoadError(err.message || String(err));
       setSuggestions([]);
@@ -93,7 +79,9 @@ function AddressAutocompleteInput({
     const places = placesRef.current;
     try {
       const place = suggestion.placePrediction.toPlace();
-      await place.fetchFields({ fields: ["formattedAddress", "addressComponents"] });
+      await place.fetchFields({
+        fields: ["formattedAddress", "addressComponents"],
+      });
 
       const formatted =
         place.formattedAddress || suggestion.placePrediction.text.toString();
@@ -115,7 +103,9 @@ function AddressAutocompleteInput({
     } finally {
       setOpen(false);
       setSuggestions([]);
-      sessionTokenRef.current = places ? new places.AutocompleteSessionToken() : null;
+      sessionTokenRef.current = places
+        ? new places.AutocompleteSessionToken()
+        : null;
     }
   };
 

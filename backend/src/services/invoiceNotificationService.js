@@ -6,7 +6,9 @@ const {
 const { provisionAccount } = require("./paymentsService");
 const { getValidationStatus } = require("./validationStatusService");
 const { ensurePublicToken } = require("../controllers/invoices/public_bill");
-const { ensureResidentPublicToken } = require("../controllers/residents/statement");
+const {
+  ensureResidentPublicToken,
+} = require("../controllers/residents/statement");
 const {
   sendEmail,
   sendSMS,
@@ -15,18 +17,6 @@ const {
   invoiceSmsText,
 } = require("../utils/emailSmsService");
 
-// ─────────────────────────────────────────────────────────────────────────
-// Shared "tell the resident about this bill" logic — previously copy-pasted
-// (with small drifts) across monthlyInvoices.js, generate_invoice.js and
-// bulk_generate.js. Consolidated here for two reasons: (1) the usual
-// reason — one bug fix instead of three; (2) Roadmap Phase 8, #1
-// (anomaly-gated billing) needs this exact same notification to fire a
-// SECOND time, later, when a held invoice is released on flag resolution
-// (see resolve_flag.js) — without a shared function that would have meant
-// a fourth copy-paste, this time with no test coverage of its own.
-// ─────────────────────────────────────────────────────────────────────────
-
-/** The exact tariff plan resolved for this invoice at creation time. */
 async function resolvePaybillShortCode(tariffPlanId) {
   if (!tariffPlanId) return null;
   const TariffPlan = getTariffPlanModel();
@@ -34,15 +24,10 @@ async function resolvePaybillShortCode(tariffPlanId) {
   return plan?.paybillShortCode || null;
 }
 
-/**
- * Sends the "you have a new water bill" notification (email + SMS +
- * WhatsApp, whichever the resident has on file) for an already-created,
- * already-billable invoice. Never throws — a notification failure must
- * never undo or block the invoice that's already been persisted by the
- * time this runs. `logPrefix` just tags console output so cron vs.
- * request-triggered vs. flag-release calls are distinguishable in logs.
- */
-async function sendInvoiceCreatedNotification(invoice, { logPrefix = "" } = {}) {
+async function sendInvoiceCreatedNotification(
+  invoice,
+  { logPrefix = "" } = {},
+) {
   try {
     const resident = await db.Resident.findById(invoice.residentId).lean();
     if (!resident) return;
@@ -56,40 +41,49 @@ async function sendInvoiceCreatedNotification(invoice, { logPrefix = "" } = {}) 
       });
       accountNumber = account.accountNumber;
     } catch (payErr) {
-      console.error(`${logPrefix}Payment account provisioning failed:`, payErr.message);
+      console.error(
+        `${logPrefix}Payment account provisioning failed:`,
+        payErr.message,
+      );
     }
 
-    const paybillShortCode = await resolvePaybillShortCode(invoice.tariffPlanId);
+    const paybillShortCode = await resolvePaybillShortCode(
+      invoice.tariffPlanId,
+    );
     const invoiceRef = invoice._id.toString().slice(-8).toUpperCase();
-    const dueDateStr = invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : "";
-
-    // Eagerly generate the public bill link so it can go out in this very
-    // first notification, rather than only existing once staff click
-    // "Share Bill Link" later.
+    const dueDateStr = invoice.dueDate
+      ? new Date(invoice.dueDate).toLocaleDateString()
+      : "";
     let billLink = null;
     try {
       const Invoice = getInvoiceModel();
       const token = await ensurePublicToken(invoice, Invoice);
       billLink = `${process.env.FRONTEND_BASE_URL || ""}/bill/${token}`;
     } catch (linkErr) {
-      console.error(`${logPrefix}Public bill link generation failed:`, linkErr.message);
+      console.error(
+        `${logPrefix}Public bill link generation failed:`,
+        linkErr.message,
+      );
     }
-
-    // Roadmap Phase 8, #3 — resident-level statement of account, attached
-    // to every bill notification the same way the per-invoice bill link is.
     let statementLink = null;
     try {
       const statementToken = await ensureResidentPublicToken(resident);
       statementLink = `${process.env.FRONTEND_BASE_URL || ""}/statement/${statementToken}`;
     } catch (statementErr) {
-      console.error(`${logPrefix}Statement link generation failed:`, statementErr.message);
+      console.error(
+        `${logPrefix}Statement link generation failed:`,
+        statementErr.message,
+      );
     }
 
     let validationStatus = null;
     try {
       validationStatus = await getValidationStatus(invoice.readingId);
     } catch (valErr) {
-      console.error(`${logPrefix}Validation status lookup failed:`, valErr.message);
+      console.error(
+        `${logPrefix}Validation status lookup failed:`,
+        valErr.message,
+      );
     }
 
     const phone = resident.phoneNumber || resident.phone;
@@ -103,11 +97,6 @@ async function sendInvoiceCreatedNotification(invoice, { logPrefix = "" } = {}) 
       validationStatus,
       statementLink,
     });
-
-    // All three channels fire via one Promise.allSettled so a failure in
-    // one (e.g. communications endpoint unreachable) can't skip the others
-    // or throw out of this function — the invoice has already been created
-    // successfully by the time this runs regardless.
     const results = await Promise.allSettled([
       resident.email
         ? sendEmail(
@@ -148,7 +137,10 @@ async function sendInvoiceCreatedNotification(invoice, { logPrefix = "" } = {}) 
         `whatsapp=${waResult.status}${waResult.status === "rejected" ? ` (${waResult.reason?.message})` : ""}`,
     );
   } catch (notifyErr) {
-    console.error(`${logPrefix}Invoice notification failed for invoice ${invoice._id}:`, notifyErr.message);
+    console.error(
+      `${logPrefix}Invoice notification failed for invoice ${invoice._id}:`,
+      notifyErr.message,
+    );
   }
 }
 

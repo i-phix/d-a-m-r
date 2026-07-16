@@ -11,23 +11,9 @@ const {
 } = require("../../services/paymentsService");
 const { denyIfFacilityMismatch } = require("../../utils/accessControl");
 
-/**
- * POST /invoices/:id/check-payment
- *
- * Manual reconciliation trigger. Most Paybill top-ups on a facility with
- * C2B URLs registered (see facility/payment-details) are already applied
- * automatically the moment Safaricom's confirmation webhook lands (see
- * mpesa_callback.js -> paymentsService.applyC2BConfirmation) — this exists
- * as a fallback/manual "I've paid, please check" action for facilities
- * without C2B registered yet, or in case a webhook delivery was ever missed.
- */
 const checkPayment = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // Ownership must be checked BEFORE reconciling, not after — otherwise
-    // an FM from another facility could trigger reconciliation (and see the
-    // resulting invoice/payment data) on a bill that isn't theirs.
     const Invoice = getInvoiceModel();
     const existing = await Invoice.findById(id).lean();
     if (!existing) return res.status(404).send({ error: "Invoice not found" });
@@ -51,15 +37,6 @@ const checkPayment = async (req, res) => {
   }
 };
 
-/**
- * POST /invoices/:id/cash-payment
- *
- * Admin/FM-triggered: staff record an amount actually received in cash (or
- * any other off-app method). This creates a native MpesaTransaction row
- * (source: "cash") against the resident's Paybill account, then immediately
- * reconciles it against this invoice via the normal check-payment path —
- * same as a real M-Pesa receipt. Body: { amount }.
- */
 const recordCashPayment = async (req, res) => {
   try {
     const { id } = req.params;
@@ -84,9 +61,7 @@ const recordCashPayment = async (req, res) => {
       unitId: invoice.unitId,
     });
 
-    const resident = await db.Resident.findById(
-      invoice.residentId,
-    ).lean();
+    const resident = await db.Resident.findById(invoice.residentId).lean();
     const phone = resident?.phoneNumber || resident?.phone;
 
     await recordOfflinePayment({
@@ -94,9 +69,6 @@ const recordCashPayment = async (req, res) => {
       amount: parsedAmount,
       phone,
     });
-
-    // The offline callback just recorded a real transaction on the Payments
-    // microservice — pull it in the same way "Check for Payment" would.
     const result = await checkAndReconcileInvoice(id);
 
     if (result.updated) {
@@ -116,14 +88,6 @@ const recordCashPayment = async (req, res) => {
     return res.status(400).send({ error: err.message });
   }
 };
-
-/**
- * GET /invoices/:id/payment-info
- *
- * Returns the Paybill shortcode + resident's account number so the
- * frontend can show "How to pay" instructions — provisions the account on
- * first request if one doesn't exist yet.
- */
 const getPaymentInfo = async (req, res) => {
   try {
     const Invoice = getInvoiceModel();

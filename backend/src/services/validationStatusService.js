@@ -1,15 +1,6 @@
 const { getFlag: getFlagModel } = require("../utils/damrSchemas");
 const { FLAG_TYPE_LABELS } = require("../utils/emailSmsService");
 
-// ─────────────────────────────────────────────────────────────────────────
-// Roadmap Phase 8, gap #5 — the proposal's sample bill (page 10) shows
-// "AI validation: Passed — within normal range" as its own line item.
-// Deliberately NOT a persisted field on Invoice: a flag raised against the
-// billed reading can be resolved well after the invoice already exists, and
-// deriving this live means the bill always reflects current state instead
-// of whatever was true the moment the invoice was generated.
-// ─────────────────────────────────────────────────────────────────────────
-
 function statusFromFlag(flag) {
   if (!flag) {
     return { status: "passed", label: "Passed — within normal range" };
@@ -56,7 +47,7 @@ async function getValidationStatusesForReadings(readingIds) {
   const flagByReading = new Map();
   for (const f of flags) {
     const key = String(f.readingId);
-    if (!flagByReading.has(key)) flagByReading.set(key, f); // most recent wins
+    if (!flagByReading.has(key)) flagByReading.set(key, f);
   }
 
   for (const id of ids) {

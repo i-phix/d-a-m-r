@@ -3,20 +3,14 @@ const {
   getMeter: getMeterModel,
   getInvoice: getInvoiceModel,
 } = require("../../utils/damrSchemas");
-const { getBlockingFlag, BLOCKING_FLAG_TYPES } = require("../../services/anomalyService");
-const { sendInvoiceCreatedNotification } = require("../../services/invoiceNotificationService");
+const {
+  getBlockingFlag,
+  BLOCKING_FLAG_TYPES,
+} = require("../../services/anomalyService");
+const {
+  sendInvoiceCreatedNotification,
+} = require("../../services/invoiceNotificationService");
 const { denyIfFacilityMismatch } = require("../../utils/accessControl");
-
-/**
- * Roadmap Phase 8, #1 — the other half of anomaly-gated billing. When the
- * flag being resolved is one of the billing-blocking types AND there's no
- * OTHER open blocking flag left on the same reading (a reading could in
- * theory carry more than one), any invoice that was created as "Held"
- * against that exact reading is released: flips to "Unpaid" (or "Overdue"
- * if the due date's already passed), and — for the very first time — the
- * resident gets the normal bill notification, via the exact same function
- * every other invoice-creation path uses.
- */
 async function releaseHeldInvoiceIfAny(flag) {
   if (!flag.readingId || !BLOCKING_FLAG_TYPES.includes(flag.type)) return;
 
@@ -31,11 +25,14 @@ async function releaseHeldInvoiceIfAny(flag) {
   if (!invoice) return;
 
   const now = new Date();
-  invoice.status = invoice.dueDate && invoice.dueDate < now ? "Overdue" : "Unpaid";
+  invoice.status =
+    invoice.dueDate && invoice.dueDate < now ? "Overdue" : "Unpaid";
   invoice.heldReason = null;
   await invoice.save();
 
-  await sendInvoiceCreatedNotification(invoice, { logPrefix: "[resolveFlag] " });
+  await sendInvoiceCreatedNotification(invoice, {
+    logPrefix: "[resolveFlag] ",
+  });
 }
 
 const resolveFlag = async (req, res) => {
@@ -60,8 +57,6 @@ const resolveFlag = async (req, res) => {
       $inc: { openFlagCount: -1 },
     });
 
-    // Best-effort — releasing the held invoice/sending its notification
-    // must never undo the fact that the flag itself is already resolved.
     try {
       await releaseHeldInvoiceIfAny(flag);
     } catch (releaseErr) {

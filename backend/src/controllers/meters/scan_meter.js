@@ -1,16 +1,10 @@
 const sharp = require("sharp");
 const fs = require("fs");
-const { isEnabled, callGeminiVision } = require("../../services/aiMessageService");
+const {
+  isEnabled,
+  callGeminiVision,
+} = require("../../services/aiMessageService");
 
-// This used to run generic Google Vision TEXT_DETECTION and then guess at
-// serial number / manufacturer / model / meter type with regexes over the
-// raw text blob (see git history). Same class of problem as the meter
-// READING OCR bug: no spatial/contextual understanding of the label, so a
-// serial number printed with a space in it (e.g. "SN 26 010012") or an
-// unusual layout just fell through every pattern silently. Switched to a
-// Gemini vision call, same pattern as ocrService.js, which also now reads
-// the register value directly — so a brand-new meter's current reading
-// gets captured at installation time instead of always defaulting to 0.
 const NAMEPLATE_PROMPT = `You are extracting details from a photo of a utility meter (water, electricity, or gas) label/nameplate/body, for a property management system, at the moment a NEW meter is being installed and registered.
 
 Extract these fields from the photo:
@@ -43,8 +37,6 @@ async function preprocessImage(imagePath) {
   return buffer.toString("base64");
 }
 
-// Gemini is asked for raw JSON but sometimes wraps it in a ```json fence
-// anyway — strip that defensively before parsing, same as ocrService.js.
 function parseGeminiNameplateResponse(text) {
   if (!text) return null;
   const cleaned = text

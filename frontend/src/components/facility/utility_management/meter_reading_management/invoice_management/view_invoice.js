@@ -23,15 +23,6 @@ const StatusBadge = ({ status }) => {
 };
 
 const formatKES = (amount) => `KES ${Number(amount || 0).toLocaleString()}`;
-
-// ── Invoice document (PayServe-style bill) ─────────────────────────────
-// This is now the whole view — the old two-column "Invoice Details /
-// Charge Breakdown / Meter / Billing Summary / Resident / Pay via M-Pesa"
-// cards were removed (they duplicated everything this document already
-// shows). Payment actions (STK push, cash payment, check-for-payment) were
-// removed along with them per request — if that functionality needs to
-// come back, it should live inside this document rather than as a
-// separate row of cards.
 const RIBBON_COLORS = {
   Paid: "#2e9e4f",
   Unpaid: "#d6127d",
@@ -239,7 +230,6 @@ const InvoiceDocStyles = () => (
   `}</style>
 );
 
-
 function ViewInvoice() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -276,10 +266,7 @@ function ViewInvoice() {
         "GET",
       );
       if (res.success) setPaymentInfo(res.data);
-    } catch (err) {
-      // Non-fatal — the invoice document just shows "—" for account/paybill
-      // fields if this fails, so no toast needed here.
-    }
+    } catch (err) {}
   };
 
   const handleGetPublicLink = async () => {
@@ -309,10 +296,6 @@ function ViewInvoice() {
       setLoadingPublicLink(false);
     }
   };
-
-  // Client-side render of the invoice document to PDF — mirrors app_main's
-  // InvoicePage.js handleDownloadPDF (html2canvas snapshot -> jsPDF pages),
-  // targeting the same "printable-invoice" element id.
   const handleDownloadPDF = async () => {
     const element = document.getElementById("printable-invoice");
     if (!element) {
@@ -342,13 +325,31 @@ function ViewInvoice() {
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
       let position = 0;
 
-      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight, "", "FAST");
+      pdf.addImage(
+        imgData,
+        "JPEG",
+        0,
+        position,
+        imgWidth,
+        imgHeight,
+        "",
+        "FAST",
+      );
 
       let heightLeft = imgHeight - pageHeight;
       while (heightLeft >= 0) {
         position = heightLeft - imgHeight;
         pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight, "", "FAST");
+        pdf.addImage(
+          imgData,
+          "JPEG",
+          0,
+          position,
+          imgWidth,
+          imgHeight,
+          "",
+          "FAST",
+        );
         heightLeft -= pageHeight;
       }
 
@@ -368,8 +369,6 @@ function ViewInvoice() {
   }, [id]);
 
   useEffect(() => {
-    // Powers the ACCOUNT NO. field in the header and the PAYMENT DETAILS
-    // footer (Paybill/account) — fetched regardless of invoice status.
     if (invoice) fetchPaymentInfo();
   }, [invoice?._id]);
 
@@ -558,7 +557,8 @@ function ViewInvoice() {
                 <tbody>
                   <tr>
                     <td>
-                      Water Charge — {invoice.periodStart &&
+                      Water Charge —{" "}
+                      {invoice.periodStart &&
                         new Date(invoice.periodStart).toLocaleDateString(
                           "en-US",
                           { month: "long", year: "numeric" },
@@ -633,9 +633,7 @@ function ViewInvoice() {
                 {invoice.breakdown?.creditsApplied > 0 && (
                   <div className="dmr-invoice-doc__totals-row">
                     <span>CREDITS APPLIED</span>
-                    <span>
-                      − {formatKES(invoice.breakdown.creditsApplied)}
-                    </span>
+                    <span>− {formatKES(invoice.breakdown.creditsApplied)}</span>
                   </div>
                 )}
                 <div className="dmr-invoice-doc__totals-row strong">

@@ -1,10 +1,5 @@
 const bcrypt = require("bcryptjs");
 const db = require("../../utils/coreSchemas");
-
-// Admin sets a brand-new password for a user. Write-only by design — this
-// is the only supported way to "recover" a lost password, because the
-// stored value is a one-way bcrypt hash (see register.js) and the original
-// password is never retrievable, by an admin or anyone else.
 const updateUserPassword = async (req, res) => {
   try {
     const { newPassword } = req.body || {};

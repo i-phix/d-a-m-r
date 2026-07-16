@@ -2,14 +2,17 @@ import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useSelector } from "react-redux";
 import axios from "axios";
+import * as XLSX from "xlsx";
 import Layout from "../../../../layout/Layout";
 import { makeAuthRequest } from "../../../../../utils/makeRequest";
 import { toastify } from "../../../../../utils/toast";
-import { getMetersURL, backend_url } from "../../../../../utils/urls";
+import {
+  getMetersURL,
+  importMetersURL,
+  importMetersTemplateURL,
+  backend_url,
+} from "../../../../../utils/urls";
 import { getItem } from "../../../../../utils/localStorage";
-
-// Local (not UTC) YYYY-MM-DD — matches what an <input type="date"> expects,
-// and avoids the classic toISOString() off-by-one-day bug near midnight.
 function todayDateString() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -477,7 +480,8 @@ function AddMeterTab({ onSuccess }) {
                 onChange={handleChange}
               />
               <small className="text-muted">
-                Read from the register in the photo — verify against the image before saving.
+                Read from the register in the photo — verify against the image
+                before saving.
               </small>
             </div>
             <div className="col-md-6 mb-3">
@@ -586,6 +590,448 @@ function AddMeterTab({ onSuccess }) {
     </div>
   );
 }
+const IMPORT_HEADER_MAP = {
+  serialnumber: "serialNumber",
+  serial: "serialNumber",
+  serialno: "serialNumber",
+  manufacturer: "manufacturer",
+  make: "manufacturer",
+  model: "model",
+  metertype: "meterType",
+  type: "meterType",
+  installationdate: "installationDate",
+  installdate: "installationDate",
+  date: "installationDate",
+  initialreading: "initialReading",
+  initialreadingm3: "initialReading",
+  reading: "initialReading",
+  condition: "condition",
+  unitname: "unitName",
+  unit: "unitName",
+  unitnameoptionalautoassignsthemeter: "unitName",
+};
+
+function normalizeImportRow(raw) {
+  const row = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    const normKey = String(key)
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_()\-‐‑‒–—]+/g, "");
+    const mapped = IMPORT_HEADER_MAP[normKey];
+    if (!mapped) return;
+    row[mapped] = typeof value === "string" ? value.trim() : value;
+  });
+  return row;
+}
+
+function isBlankRow(row) {
+  return Object.entries(row).every(
+    ([key, v]) => key === "installationDate" || String(v || "").trim() === "",
+  );
+}
+
+function ImportMetersTab({ onSuccess }) {
+  const csvInputRef = useRef(null);
+  const excelInputRef = useRef(null);
+  const [fileName, setFileName] = useState("");
+  const [propertyName, setPropertyName] = useState("");
+  const [rows, setRows] = useState([]);
+  const [parseErrors, setParseErrors] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+  const [results, setResults] = useState(null);
+
+  const handleDownloadTemplate = async () => {
+    try {
+      setDownloadingTemplate(true);
+      const damrUser = await getItem("DAMR_USER");
+      const res = await axios.get(`${backend_url}${importMetersTemplateURL}`, {
+        responseType: "blob",
+        headers: { Authorization: `Bearer ${damrUser?.token}` },
+      });
+      const url = URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "meter_import_template.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      let msg = err.message;
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).error || msg;
+        } catch {
+          // fall through to the generic err.message
+        }
+      }
+      toastify(`Could not download template: ${msg}`, "error");
+    } finally {
+      setDownloadingTemplate(false);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileName(file.name);
+    setResults(null);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const isOwnTemplate =
+          workbook.SheetNames.includes("Property") &&
+          workbook.SheetNames.includes("Meters");
+
+        let property = "";
+        let dataSheetName = workbook.SheetNames[0];
+        if (isOwnTemplate) {
+          const propertyCell = workbook.Sheets["Property"]["A2"];
+          property = propertyCell ? String(propertyCell.v || "").trim() : "";
+          dataSheetName = "Meters";
+        }
+
+        const rawRows = XLSX.utils.sheet_to_json(
+          workbook.Sheets[dataSheetName],
+          {
+            defval: "",
+            raw: false,
+          },
+        );
+
+        const normalized = rawRows
+          .map(normalizeImportRow)
+          .filter((r) => !isBlankRow(r));
+        const errors = [];
+        normalized.forEach((row, i) => {
+          if (!row.serialNumber) {
+            errors.push(`Row ${i + 1}: missing serial number`);
+          }
+        });
+
+        setPropertyName(property);
+        setRows(normalized);
+        setParseErrors(errors);
+
+        if (normalized.length === 0) {
+          toastify("No rows found in file", "warn");
+        } else {
+          toastify(
+            `Parsed ${normalized.length} row(s)${property ? ` for ${property}` : ""} — review below and click Import`,
+            "info",
+          );
+        }
+      } catch (err) {
+        toastify(`Could not read file: ${err.message}`, "error");
+        setRows([]);
+        setParseErrors([]);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleImport = async () => {
+    if (rows.length === 0) {
+      toastify("Choose a file to import first", "error");
+      return;
+    }
+    try {
+      setImporting(true);
+      setResults(null);
+      const res = await makeAuthRequest(importMetersURL, "POST", {
+        meters: rows,
+        facilityName: propertyName || undefined,
+      });
+      if (res.success) {
+        const summary = res.data;
+        setResults(summary);
+        toastify(
+          `Import complete — ${summary.created} created, ${summary.skipped} skipped, ${summary.errors} errors` +
+            (summary.assigned
+              ? `, ${summary.assigned} assigned to a unit`
+              : ""),
+          summary.errors > 0 ? "warn" : "success",
+        );
+        if (onSuccess) onSuccess();
+      } else {
+        toastify(res.error, "error");
+      }
+    } catch (err) {
+      toastify(err.message, "error");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleClear = () => {
+    setFileName("");
+    setPropertyName("");
+    setRows([]);
+    setParseErrors([]);
+    setResults(null);
+    if (csvInputRef.current) csvInputRef.current.value = "";
+    if (excelInputRef.current) excelInputRef.current.value = "";
+  };
+
+  const resultBadge = (status) =>
+    ({
+      created: "bg-success",
+      skipped: "bg-warning",
+      error: "bg-danger",
+    })[status] || "bg-secondary";
+
+  return (
+    <div className="card-body">
+      <div className="d-flex justify-content-end align-items-start mb-2">
+        <div className="btn-group" role="group" aria-label="Import meters">
+          <button
+            type="button"
+            className="btn btn-primary text-white"
+            style={{ borderRadius: 0 }}
+            onClick={() => csvInputRef.current?.click()}
+          >
+            <i className="ti ti-file-type-csv me-1"></i> CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn-success text-white"
+            style={{ borderRadius: 0 }}
+            onClick={() => excelInputRef.current?.click()}
+          >
+            <i className="ti ti-file-spreadsheet me-1"></i> Excel
+          </button>
+          <button
+            type="button"
+            className="btn text-white"
+            style={{ borderRadius: 0, backgroundColor: "#fd7e14" }}
+            disabled={downloadingTemplate}
+            onClick={handleDownloadTemplate}
+          >
+            <i className="ti ti-download me-1"></i>
+            {downloadingTemplate ? "Preparing..." : "Download Template"}
+          </button>
+        </div>
+        <input
+          ref={csvInputRef}
+          type="file"
+          className="d-none"
+          accept=".csv"
+          onChange={handleFileChange}
+        />
+        <input
+          ref={excelInputRef}
+          type="file"
+          className="d-none"
+          accept=".xlsx,.xls,.xlsm"
+          onChange={handleFileChange}
+        />
+      </div>
+      <div className="mb-4 text-end">
+        <small className="text-muted">
+          Columns: serialNumber (required), manufacturer, model, meterType
+          (analogue/digital), installationDate, initialReading, condition
+          (new/used/replaced), unitName (optional — auto-assigns the meter to
+          that unit). Unmatched columns are ignored.
+          {fileName && (
+            <>
+              {" "}
+              Selected: <strong>{fileName}</strong>
+            </>
+          )}
+          {propertyName && (
+            <>
+              {" "}
+              · Property: <strong>{propertyName}</strong>
+            </>
+          )}
+        </small>
+      </div>
+
+      {parseErrors.length > 0 && (
+        <div className="alert alert-warning py-2">
+          <strong>{parseErrors.length} row(s) will be skipped:</strong>
+          <ul className="mb-0">
+            {parseErrors.slice(0, 5).map((e, i) => (
+              <li key={i}>{e}</li>
+            ))}
+            {parseErrors.length > 5 && (
+              <li>...and {parseErrors.length - 5} more</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {rows.length > 0 && !results && (
+        <>
+          <div
+            className="table-responsive mb-3"
+            style={{ maxHeight: 320, overflowY: "auto" }}
+          >
+            <table className="table table-sm table-hover">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Serial Number</th>
+                  <th>Manufacturer</th>
+                  <th>Model</th>
+                  <th>Type</th>
+                  <th>Installation Date</th>
+                  <th>Initial Reading</th>
+                  <th>Condition</th>
+                  <th>Unit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className={!r.serialNumber ? "table-danger" : ""}>
+                    <td>{i + 1}</td>
+                    <td>
+                      {r.serialNumber || (
+                        <span className="text-danger">missing</span>
+                      )}
+                    </td>
+                    <td>{r.manufacturer || "—"}</td>
+                    <td>{r.model || "—"}</td>
+                    <td>{r.meterType || "analogue"}</td>
+                    <td>{r.installationDate || "today"}</td>
+                    <td>{r.initialReading || 0}</td>
+                    <td>{r.condition || "new"}</td>
+                    <td>{r.unitName || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="text-end">
+            <button className="btn btn-secondary me-2" onClick={handleClear}>
+              Clear
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={importing}
+              onClick={handleImport}
+            >
+              {importing ? (
+                "Importing..."
+              ) : (
+                <>
+                  <i className="ti ti-upload me-2"></i>
+                  Import {rows.length} Meter{rows.length === 1 ? "" : "s"}
+                </>
+              )}
+            </button>
+          </div>
+        </>
+      )}
+
+      {results && (
+        <div>
+          <div className="row mb-3">
+            <div className="col-md-3">
+              <div className="alert alert-success mb-0 text-center">
+                <div className="fs-4 fw-bold">{results.created}</div>
+                Created
+              </div>
+            </div>
+            <div className="col-md-3">
+              <div className="alert alert-info mb-0 text-center">
+                <div className="fs-4 fw-bold">{results.assigned || 0}</div>
+                Assigned to a Unit
+              </div>
+            </div>
+            <div className="col-md-3">
+              <div className="alert alert-warning mb-0 text-center">
+                <div className="fs-4 fw-bold">{results.skipped}</div>
+                Skipped
+              </div>
+            </div>
+            <div className="col-md-3">
+              <div className="alert alert-danger mb-0 text-center">
+                <div className="fs-4 fw-bold">{results.errors}</div>
+                Errors
+              </div>
+            </div>
+          </div>
+
+          <div
+            className="table-responsive mb-3"
+            style={{ maxHeight: 320, overflowY: "auto" }}
+          >
+            <table className="table table-sm table-hover">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Serial Number</th>
+                  <th>Status</th>
+                  <th>Message</th>
+                  <th>Assignment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.results.map((r) => (
+                  <tr key={r.row}>
+                    <td>{r.row}</td>
+                    <td>{r.serialNumber || "—"}</td>
+                    <td>
+                      <span className={`badge ${resultBadge(r.status)}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td>
+                      {r.message ||
+                        (r.status === "created" ? "Meter created" : "")}
+                    </td>
+                    <td>
+                      {r.assignment ? (
+                        <span
+                          className={`badge ${r.assignment.status === "assigned" ? "bg-info" : "bg-secondary"}`}
+                          title={r.assignment.message || ""}
+                        >
+                          {r.assignment.status === "assigned"
+                            ? `→ ${r.assignment.unitName}`
+                            : r.assignment.status}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="text-end">
+            <button className="btn btn-secondary" onClick={handleClear}>
+              <i className="ti ti-refresh me-1"></i> Import Another File
+            </button>
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 && !results && (
+        <div
+          className="card border-dashed text-center p-4"
+          style={{ border: "2px dashed #dee2e6" }}
+        >
+          <i
+            className="ti ti-file-upload text-muted"
+            style={{ fontSize: "48px" }}
+          ></i>
+          <p className="text-muted mt-2 mb-0">
+            Click CSV or Excel above to choose a file and preview meters before
+            importing
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Meters() {
   const location = useLocation();
@@ -605,6 +1051,12 @@ function Meters() {
       key: "add",
       label: "Add Meter",
       icon: "ti ti-plus",
+      roles: ["admin", "editor"],
+    },
+    {
+      key: "import",
+      label: "Import Meters",
+      icon: "ti ti-file-import",
       roles: ["admin", "editor"],
     },
   ];
@@ -651,6 +1103,9 @@ function Meters() {
             {activeTab === "all" && <AllMetersTab />}
             {activeTab === "add" && userRole !== "Staff" && (
               <AddMeterTab onSuccess={() => setActiveTab("all")} />
+            )}
+            {activeTab === "import" && userRole !== "Staff" && (
+              <ImportMetersTab onSuccess={() => {}} />
             )}
           </div>
         </div>

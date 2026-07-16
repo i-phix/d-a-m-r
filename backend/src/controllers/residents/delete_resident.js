@@ -41,10 +41,6 @@ const deleteResident = async (req, res) => {
 
     const meter = await Meter.findOne({ unitId: resident.unitId });
     if (meter) {
-      // The meter stays ASSIGNED — it's still physically installed on this
-      // unit, just with nobody currently living there. Only clear the
-      // resident binding, don't touch status (there's no "unoccupied" state
-      // anymore; a meter is either bound to a unit or it isn't).
       await Meter.findByIdAndUpdate(meter._id, {
         currentResident: null,
       });
@@ -53,12 +49,6 @@ const deleteResident = async (req, res) => {
         { active: false, unbindDate: new Date() },
       );
     }
-
-    // "Inactive" isn't a valid value in payservedb's User.role enum
-    // (admin/editor/user/guard/family/Staff/supplier) — findByIdAndUpdate
-    // doesn't run validators by default, so this previously stored an
-    // invalid role silently rather than actually disabling the login.
-    // isEnabled is the field that actually exists for this purpose.
     const linkedUser = await db.User.findOne({ email: resident.email });
     if (linkedUser) {
       await db.User.findByIdAndUpdate(linkedUser._id, {
